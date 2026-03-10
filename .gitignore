@@ -1,0 +1,28 @@
+usl_signal_hunter_v2_schema.sql
+USL_Signal_Hunter_v2_Specification (3).pdf
+USL_Signal_Hunter_v2_Prompts (2).pdf
+# Secrets / env
+.env
+.env.*
+!.env.example
+
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Key/cert files
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+
+# Local DB/dumps (can contain sensitive data)
+*.db
+*.sqlite
+*.sqlite3
+*.dump

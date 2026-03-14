@@ -186,3 +186,39 @@ export const api = {
       body: { entry_id: entryId },
     }),
 }
+// Pipeline configs
+  listPipelineConfigs: () => request('/pipeline-configs'),
+  createPipelineConfig: (body) => request('/pipeline-configs', { method: 'POST', body }),
+  updatePipelineConfig: (id, body) => request(`/pipeline-configs/${id}`, { method: 'PUT', body }),
+  deletePipelineConfig: (id) => request(`/pipeline-configs/${id}`, { method: 'DELETE' }),
+
+// Staging
+  getStagingEntries: (pipelineKey, batchId) => {
+    const params = batchId ? `?batch_id=${batchId}` : ''
+    return request(`/staging/${pipelineKey}/entries${params}`)
+  },
+  labelStagingEntry: ({ pipelineKey, stagingId, label, learningData }) =>
+    request(`/staging/${pipelineKey}/${stagingId}/label`, {
+      method: 'POST',
+      body: { label, learning_data: learningData },
+    }),
+  enrichStagingEntry: ({ pipelineKey, stagingId, payload }) =>
+    request(`/staging/${pipelineKey}/${stagingId}/enrich`, {
+      method: 'PUT',
+      body: payload,
+    }),
+  cbStagingAction: ({ pipelineKey, stagingId, payload }) =>
+    request(`/staging/${pipelineKey}/${stagingId}/cb-action`, {
+      method: 'POST',
+      body: payload,
+    }),
+  finishAnalysis: ({ pipelineKey, batchId }) =>
+    request(`/staging/${pipelineKey}/finish-analysis`, {
+      method: 'POST',
+      body: { batch_id: batchId },
+    }),
+  checkContacted: (payload) =>
+    request('/contacted-check', {
+      method: 'POST',
+      body: payload,
+    }),

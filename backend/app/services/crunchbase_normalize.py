@@ -255,166 +255,65 @@ def parse_csv(raw_bytes: bytes) -> list[CrunchbaseRow]:
 async def process_crunchbase_import(
     db: AsyncClient,
     rows: list[CrunchbaseRow],
+    pipeline_key: str,
     batch_id: str,
 ) -> int:
     """
-    Persist CB rows to normalized tables and create crunchbase pipeline entries.
+    Write CB records to staging_crunchbase.
+    Dedup via UNIQUE(dedup_key) + ON CONFLICT DO NOTHING.
     """
     if not rows:
         return 0
 
-    # ------------------------------------------------------------------
-    # 0. In-memory dedup by external_id/fingerprint
-    # ------------------------------------------------------------------
-    unique_rows: list[CrunchbaseRow] = []
-    seen: set[str] = set()
+    staging_rows = []
     for r in rows:
-        if not any(
-            [
-                (r.external_id or "").strip(),
-                (r.company_name or "").strip(),
-                (r.company_website or "").strip(),
-                (r.company_linkedin or "").strip(),
-            ]
-        ):
-            continue
-        domain = normalize_domain(r.company_website)
-        fp = make_fingerprint(r.company_name, domain) or ""
-        key = (r.external_id or fp or "").strip().lower()
-        if not key:
-            key = f"row-{len(unique_rows)}"
-        if key in seen:
-            continue
-        seen.add(key)
-        unique_rows.append(r)
-
-    filtered = unique_rows
-
-    # ------------------------------------------------------------------
-    # 2. Resolve companies
-    # ------------------------------------------------------------------
-    fps: list[Optional[str]] = []
-    fp_meta: dict[str, tuple[CrunchbaseRow, str]] = {}
-    for r in filtered:
         domain = normalize_domain(r.company_website)
         fp = make_fingerprint(r.company_name, domain)
-        fps.append(fp)
-        if fp and fp not in fp_meta:
-            fp_meta[fp] = (r, domain)
-
-    all_fps = list(fp_meta.keys())
-    existing_map: dict[str, str] = {}
-    for chunk in _chunks(all_fps, 100):
-        rows_res = (
-            await db.table("companies")
-            .select("id,fingerprint")
-            .or_(_fp_or_filter(chunk))
-            .execute()
-        )
-        for row in rows_res.data or []:
-            existing_map[row["fingerprint"]] = row["id"]
-
-    new_fps = {fp for fp in all_fps if fp not in existing_map}
-    if new_fps:
-        inserts = []
-        for fp in new_fps:
-            r, domain = fp_meta[fp]
-            inserts.append(
-                {
-                    "name_raw": r.company_name or "Unknown company",
-                    "domain_normalized": domain or None,
-                    "linkedin_url": r.company_linkedin or None,
-                    "linkedin_url_cleaned": r.company_linkedin or None,
-                    "website": r.company_website or None,
-                    "country": r.company_country or None,
-                    "description": r.company_description or None,
-                    "industry": r.company_industry or None,
-                    "employee_count": r.company_employee_count or None,
-                    "hq_location": r.company_hq_location or None,
-                    "founded_on": r.company_founded_on or None,
-                    "crunchbase_profile_url": r.crunchbase_profile_url or None,
-                    "fingerprint": fp,
-                }
-            )
-        for chunk in _chunks(inserts, 500):
-            ins_res = await db.table("companies").insert(chunk).execute()
-            for row in ins_res.data or []:
-                existing_map[row["fingerprint"]] = row["id"]
-
-    # Enrich existing with safe RPC (non-clobber)
-    for fp, (r, domain) in fp_meta.items():
-        if fp in new_fps or fp not in existing_map:
+        dedup = (r.external_id or fp or "").strip()
+        if not dedup:
             continue
-        await db.rpc(
-            "enrich_company",
-            {
-                "p_id": existing_map[fp],
-                "p_domain": domain or None,
-                "p_linkedin_url": r.company_linkedin or None,
-                "p_website": r.company_website or None,
-                "p_country": r.company_country or None,
-                "p_employee_count": r.company_employee_count or None,
-                "p_enriched_by": "crunchbase",
-            },
-        ).execute()
 
-    company_ids = [existing_map.get(fp) if fp else None for fp in fps]
-
-    # ------------------------------------------------------------------
-    # 3. Insert contacts (main contact URL only, editable later)
-    # ------------------------------------------------------------------
-    contact_rows = [
-        {
-            "company_id": company_id,
-            "linkedin_url": r.main_contact or None,
-            "source": "crunchbase",
-        }
-        for r, company_id in zip(filtered, company_ids)
-    ]
-
-    contact_ids: list[str] = []
-    for chunk in _chunks(contact_rows, 500):
-        res = await db.table("contacts").insert(chunk).execute()
-        contact_ids.extend(row["id"] for row in (res.data or []))
-
-    # ------------------------------------------------------------------
-    # 4. Insert signals
-    # ------------------------------------------------------------------
-    signal_rows = [
-        {
-            "company_id": company_id,
-            "source_type": "crunchbase",
-            "external_id": r.external_id or None,
+        staging_rows.append({
+            "pipeline_key": pipeline_key,
+            "batch_id": batch_id,
+            "dedup_key": dedup,
+            "company_name": r.company_name or None,
+            "company_website": r.company_website or None,
+            "company_linkedin": r.company_linkedin or None,
+            "company_country": r.company_country or None,
+            "company_industry": r.company_industry or None,
+            "company_hq_location": r.company_hq_location or None,
+            "company_description": r.company_description or None,
+            "company_founded_on": r.company_founded_on or None,
+            "company_employee_count": r.company_employee_count or None,
+            "crunchbase_profile_url": r.crunchbase_profile_url or None,
+            "funding_series": (r.source_metadata or {}).get("series") or None,
+            "last_funding_amount": str((r.source_metadata or {}).get("last_funding_amount_usd") or "") or None,
+            "last_funding_date": (r.source_metadata or {}).get("last_funding_date") or None,
+            "funding_rounds": str((r.source_metadata or {}).get("funding_rounds") or "") or None,
+            "investors": str((r.source_metadata or {}).get("investors") or "") or None,
+            "revenue_range": (r.source_metadata or {}).get("revenue_range") or None,
             "content_url": r.crunchbase_profile_url or r.company_linkedin or r.company_website or None,
-            "content_text": r.company_description or None,
-            "content_title": r.company_name or None,
             "content_summary": r.content_summary or r.company_description or None,
             "ai_classifier": r.ai_classifier or None,
-            "source_robot": "airtable",
+            "main_contact_linkedin": r.main_contact or None,
+            "secondary_contact_1": r.secondary_contact_1 or None,
+            "secondary_contact_2": r.secondary_contact_2 or None,
+            "secondary_contact_3": r.secondary_contact_3 or None,
+            "message_fin": r.message_fin or None,
+            "external_id": r.external_id or None,
+            "airtable_status": (r.source_metadata or {}).get("status") or None,
+            "contact_enriched": (r.source_metadata or {}).get("contact_enriched"),
             "source_metadata": r.source_metadata or {},
-        }
-        for r, company_id in zip(filtered, company_ids)
-    ]
+        })
 
-    signal_ids: list[str] = []
-    for chunk in _chunks(signal_rows, 500):
-        res = await db.table("signals").insert(chunk).execute()
-        signal_ids.extend(row["id"] for row in (res.data or []))
+    inserted = 0
+    for chunk in _chunks(staging_rows, 500):
+        res = (
+            await db.table("staging_crunchbase")
+            .upsert(chunk, on_conflict="dedup_key", ignore_duplicates=True)
+            .execute()
+        )
+        inserted += len(res.data or [])
 
-    # ------------------------------------------------------------------
-    # 5. Insert pipeline entries
-    # ------------------------------------------------------------------
-    entry_rows = [
-        {
-            "signal_id": signal_id,
-            "contact_id": contact_id if contact_id else None,
-            "pipeline_type": "crunchbase",
-            "batch_id": batch_id,
-            "status": "new",
-        }
-        for signal_id, contact_id in zip(signal_ids, contact_ids)
-    ]
-    for chunk in _chunks(entry_rows, 500):
-        await db.table("pipeline_entries").insert(chunk).execute()
-
-    return len(filtered)
+    return inserted

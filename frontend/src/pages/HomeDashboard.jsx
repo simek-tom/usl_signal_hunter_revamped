@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
-import { PIPELINES, pipelineLabel } from '../lib/pipeline'
+import { usePipelineConfigs } from '../context/PipelineConfigContext'
 import ProgressBar from '../components/ProgressBar'
 import StatusBadge from '../components/StatusBadge'
 import MessageBox from '../components/MessageBox'
 
-function BatchRow({ batch }) {
+function BatchRow({ batch, getLabel }) {
   const progress = batch.progress || { total: 0, yes: 0, no: 0, cc: 0, unlabeled: 0 }
   const labeled = progress.yes + progress.no + progress.cc
 
@@ -14,7 +14,7 @@ function BatchRow({ batch }) {
     <div className="panel" style={{ padding: '0.8rem', display: 'grid', gap: '0.5rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center' }}>
         <div>
-          <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{pipelineLabel(batch.pipeline_type)}</div>
+          <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{getLabel(batch.pipeline_type)}</div>
           <div style={{ fontSize: '0.75rem', color: 'var(--ink-soft)' }}>Batch {batch.id.slice(0, 8)}...</div>
         </div>
         <StatusBadge status={batch.status || 'new'} />
@@ -30,7 +30,7 @@ function BatchRow({ batch }) {
       </div>
 
       <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-        <Link className="btn" to={`/analyze/${batch.id}`}>
+        <Link className="btn" to={`/analyze/${batch.pipeline_type}/${batch.id}`}>
           Analyze
         </Link>
         {batch.pipeline_type !== 'crunchbase' ? (
@@ -47,6 +47,7 @@ function BatchRow({ batch }) {
 }
 
 export default function HomeDashboard() {
+  const { configs, getLabel } = usePipelineConfigs()
   const [batches, setBatches] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -78,11 +79,11 @@ export default function HomeDashboard() {
   }, [])
 
   const quickStats = useMemo(() => {
-    const byPipeline = PIPELINES.map((p) => {
-      const rel = batches.filter((b) => b.pipeline_type === p.key)
+    const byPipeline = configs.map((p) => {
+      const rel = batches.filter((b) => b.pipeline_type === p.pipeline_key)
       const entries = rel.reduce((acc, b) => acc + (b.progress?.total || 0), 0)
       return {
-        key: p.key,
+        key: p.pipeline_key,
         label: p.label,
         batches: rel.length,
         entries,
@@ -94,7 +95,7 @@ export default function HomeDashboard() {
       totalEntries: batches.reduce((acc, b) => acc + (b.progress?.total || 0), 0),
       byPipeline,
     }
-  }, [batches])
+  }, [batches, configs])
 
   const activeBatches = useMemo(
     () => batches.filter((b) => (b.progress?.unlabeled || 0) > 0 || (b.progress?.total || 0) > 0).slice(0, 12),
@@ -159,7 +160,7 @@ export default function HomeDashboard() {
         ) : (
           <div className="grid-3">
             {activeBatches.map((batch) => (
-              <BatchRow key={batch.id} batch={batch} />
+              <BatchRow key={batch.id} batch={batch} getLabel={getLabel} />
             ))}
           </div>
         )}

@@ -235,7 +235,7 @@ async def finish_analysis(
 
 from app.services.contacted_check import check_contacted
 
-@router.post("/contacted-check")
+@router.post("/_contacted-check")
 async def contacted_check_endpoint(
     body: dict,
     db: AsyncClient = Depends(get_supabase),

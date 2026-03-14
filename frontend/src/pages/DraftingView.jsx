@@ -337,7 +337,7 @@ export default function DraftingView() {
           </div>
 
           <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-            <Link className="btn" to={`/analyze/${batchId}`}>
+            <Link className="btn" to={`/analyze/${current?.pipeline_type || 'lp_general'}/${batchId}`}>
               Back to Analysis
             </Link>
             <button className="btn" onClick={() => setEditTableOpen((v) => !v)}>

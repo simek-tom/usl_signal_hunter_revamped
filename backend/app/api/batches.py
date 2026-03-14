@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from supabase import AsyncClient
 
 from app.core.supabase import get_supabase
-from app.services.dedup import _normalize_url
+from app.services.leadspicker_normalize import _normalize_url_for_dedup
 
 router = APIRouter(prefix="/batches", tags=["batches"])
 
@@ -233,7 +233,7 @@ async def finish_labeling(batch_id: str, db: AsyncClient = Depends(get_supabase)
     for e in labeled:
         sig = e.get("signals") or {}
         content_url = sig.get("content_url")
-        dedup_key = _normalize_url(content_url)
+        dedup_key = _normalize_url_for_dedup(content_url)
         if not dedup_key:
             continue
         rows.append(

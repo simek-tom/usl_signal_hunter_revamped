@@ -139,9 +139,9 @@ async def push_to_leadspicker(
                 skipped += 1
                 continue
 
+            sig = entry.get("signals") or {}
             is_crunchbase = entry.get("pipeline_type") == "crunchbase"
             if is_crunchbase:
-                sig = entry.get("signals") or {}
                 meta = sig.get("source_metadata") or {}
                 if not isinstance(meta, dict):
                     meta = {}
@@ -192,7 +192,14 @@ async def push_to_leadspicker(
             # Always log the attempt (ok or error)
             await db.rpc(
                 "complete_push",
-                { ... },
+                {
+                    "p_entry_id": eid,
+                    "p_target_system": "leadspicker",
+                    "p_target_project_id": str(project_id),
+                    "p_external_id": external_id,
+                    "p_push_status": push_status,
+                    "p_response_data": response_data,
+                },
             ).execute()
 
             # Record this company as contacted

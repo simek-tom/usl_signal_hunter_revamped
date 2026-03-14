@@ -13,7 +13,6 @@ from app.services.crunchbase_normalize import (
     parse_csv as parse_crunchbase_csv,
     process_crunchbase_import,
 )
-from app.services.dedup import deduplicate_batch
 from app.services.leadspicker_fetch import fetch_project_people
 from app.services.leadspicker_normalize import (
     from_lp_api,
@@ -50,7 +49,6 @@ async def _run_import(
     people_raw,
     pipeline_type: PipelineType,
     source_details: dict,
-    auto_dedup: bool = False,
 ) -> ImportResult:
     """Shared logic: create batch, persist people, return result."""
     # Create batch record up-front
@@ -76,9 +74,6 @@ async def _run_import(
         "id", batch_id
     ).execute()
 
-    if auto_dedup:
-        await deduplicate_batch(db, batch_id, pipeline_type.value)
-
     return ImportResult(
         batch_id=batch_id,
         pipeline_type=pipeline_type.value,
@@ -90,7 +85,6 @@ async def _run_crunchbase_import(
     db: AsyncClient,
     rows,
     source_details: dict,
-    auto_dedup: bool = False,
 ) -> ImportResult:
     batch_result = (
         await db.table("import_batches")
@@ -112,9 +106,6 @@ async def _run_crunchbase_import(
         "id", batch_id
     ).execute()
 
-    if auto_dedup:
-        await deduplicate_batch(db, batch_id, PipelineType.crunchbase.value)
-
     return ImportResult(
         batch_id=batch_id,
         pipeline_type=PipelineType.crunchbase.value,
@@ -126,7 +117,6 @@ async def _run_news_import(
     db: AsyncClient,
     rows,
     source_details: dict,
-    auto_dedup: bool = False,
 ) -> ImportResult:
     batch_result = (
         await db.table("import_batches")
@@ -147,9 +137,6 @@ async def _run_news_import(
     await db.table("import_batches").update({"record_count": count}).eq(
         "id", batch_id
     ).execute()
-
-    if auto_dedup:
-        await deduplicate_batch(db, batch_id, PipelineType.news.value)
 
     return ImportResult(
         batch_id=batch_id,
@@ -188,7 +175,6 @@ def _as_int(val, fallback: int) -> int:
 @router.post("/lp", response_model=ImportResult)
 async def import_from_lp_api(
     body: ImportLpRequest,
-    auto_dedup: bool = Query(False),
     db: AsyncClient = Depends(get_supabase),
 ):
     """Fetch people from LP API for given project IDs, import into pipeline."""
@@ -215,14 +201,12 @@ async def import_from_lp_api(
             "project_ids": body.project_ids,
             "fetched_count": len(raw_items),
         },
-        auto_dedup=auto_dedup,
     )
 
 
 @router.post("/lp/upload", response_model=ImportResult)
 async def import_from_csv(
     pipeline_type: PipelineType = Query(...),
-    auto_dedup: bool = Query(False),
     file: UploadFile = File(...),
     db: AsyncClient = Depends(get_supabase),
 ):
@@ -247,14 +231,12 @@ async def import_from_csv(
             "filename": file.filename,
             "row_count": len(people),
         },
-        auto_dedup=auto_dedup,
     )
 
 
 @router.post("/crunchbase", response_model=ImportResult)
 async def import_from_crunchbase_airtable(
     body: ImportCrunchbaseRequest,
-    auto_dedup: bool = Query(False),
     db: AsyncClient = Depends(get_supabase),
 ):
     """
@@ -288,13 +270,11 @@ async def import_from_crunchbase_airtable(
             "table_name": body.table_name,
             "fetched_count": len(rows),
         },
-        auto_dedup=auto_dedup,
     )
 
 
 @router.post("/crunchbase/upload", response_model=ImportResult)
 async def import_crunchbase_from_csv(
-    auto_dedup: bool = Query(False),
     file: UploadFile = File(...),
     db: AsyncClient = Depends(get_supabase),
 ):
@@ -321,14 +301,12 @@ async def import_crunchbase_from_csv(
             "filename": file.filename,
             "row_count": len(rows),
         },
-        auto_dedup=auto_dedup,
     )
 
 
 @router.post("/news", response_model=ImportResult)
 async def import_from_news_api(
     body: ImportNewsRequest,
-    auto_dedup: bool = Query(True),
     db: AsyncClient = Depends(get_supabase),
 ):
     """
@@ -409,5 +387,4 @@ async def import_from_news_api(
             "total_results": fetched.get("total_results"),
             "fetched_count": len(raw_articles),
         },
-        auto_dedup=auto_dedup,
     )

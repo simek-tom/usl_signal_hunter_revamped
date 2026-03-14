@@ -52,8 +52,8 @@ export const api = {
   listProjects: () => request('/lp-projects'),
   refreshProjects: () => request('/lp-projects/refresh', { method: 'POST' }),
 
-  importFromLp: ({ projectIds, pipelineType, autoDedup = true }) =>
-    request(`/import/lp?auto_dedup=${autoDedup ? 'true' : 'false'}`, {
+  importFromLp: ({ projectIds, pipelineType }) =>
+    request('/import/lp', {
       method: 'POST',
       body: { project_ids: projectIds, pipeline_type: pipelineType },
     }),
@@ -64,9 +64,8 @@ export const api = {
     view,
     maxRecords = 200,
     tableName,
-    autoDedup = true,
   }) =>
-    request(`/import/crunchbase?auto_dedup=${autoDedup ? 'true' : 'false'}`, {
+    request('/import/crunchbase', {
       method: 'POST',
       body: {
         status: status || null,
@@ -86,9 +85,8 @@ export const api = {
     sortBy,
     pageSize,
     maxPages,
-    autoDedup = true,
   }) =>
-    request(`/import/news?auto_dedup=${autoDedup ? 'true' : 'false'}`, {
+    request('/import/news', {
       method: 'POST',
       body: {
         query: query || null,
@@ -102,11 +100,11 @@ export const api = {
       },
     }),
 
-  uploadCsv: ({ file, pipelineType, autoDedup = true }) => {
+  uploadCsv: ({ file, pipelineType }) => {
     const form = new FormData()
     form.append('file', file)
     return request(
-      `/import/lp/upload?pipeline_type=${pipelineType}&auto_dedup=${autoDedup ? 'true' : 'false'}`,
+      `/import/lp/upload?pipeline_type=${pipelineType}`,
       {
         method: 'POST',
         body: form,
@@ -115,17 +113,15 @@ export const api = {
     )
   },
 
-  uploadCrunchbaseCsv: ({ file, autoDedup = true }) => {
+  uploadCrunchbaseCsv: ({ file }) => {
     const form = new FormData()
     form.append('file', file)
-    return request(`/import/crunchbase/upload?auto_dedup=${autoDedup ? 'true' : 'false'}`, {
+    return request('/import/crunchbase/upload', {
       method: 'POST',
       body: form,
       isForm: true,
     })
   },
-
-  dedupBatch: (batchId) => request(`/dedup/${batchId}`, { method: 'POST' }),
 
   labelEntry: ({ entryId, label, learningData }) =>
     request(`/entries/${entryId}/label`, {
@@ -185,14 +181,14 @@ export const api = {
       method: 'POST',
       body: { entry_id: entryId },
     }),
-}
-// Pipeline configs
+
+  // Pipeline configs
   listPipelineConfigs: () => request('/pipeline-configs'),
   createPipelineConfig: (body) => request('/pipeline-configs', { method: 'POST', body }),
   updatePipelineConfig: (id, body) => request(`/pipeline-configs/${id}`, { method: 'PUT', body }),
   deletePipelineConfig: (id) => request(`/pipeline-configs/${id}`, { method: 'DELETE' }),
 
-// Staging
+  // Staging
   getStagingEntries: (pipelineKey, batchId) => {
     const params = batchId ? `?batch_id=${batchId}` : ''
     return request(`/staging/${pipelineKey}/entries${params}`)
@@ -218,7 +214,8 @@ export const api = {
       body: { batch_id: batchId },
     }),
   checkContacted: (payload) =>
-    request('/contacted-check', {
+    request('/staging/_contacted-check', {
       method: 'POST',
       body: payload,
     }),
+}

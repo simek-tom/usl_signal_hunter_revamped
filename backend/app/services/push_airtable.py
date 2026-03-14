@@ -292,6 +292,27 @@ async def create_lp_airtable_records(
                 response_data=response_data,
             )
 
+        # Record contacted companies on success
+        if push_status == "success":
+            from app.services.leadspicker_normalize import normalize_domain, make_fingerprint
+            from app.core.utils import normalize_company_name
+            for entry_obj in chunk:
+                sig = entry_obj.get("signals") or {}
+                co = sig.get("companies") or {}
+                co_name = co.get("name_raw") or ""
+                co_domain = normalize_domain(co.get("website") or co.get("domain_normalized") or "")
+                try:
+                    await db.table("contacted_companies").insert({
+                        "company_name_normalized": normalize_company_name(co_name) if co_name else None,
+                        "domain_normalized": co_domain or None,
+                        "linkedin_url": co.get("linkedin_url") or None,
+                        "fingerprint": make_fingerprint(co_name, co_domain),
+                        "contacted_via": entry_obj.get("pipeline_type"),
+                        "pipeline_entry_id": entry_obj["id"],
+                    }).execute()
+                except Exception:
+                    pass  # non-blocking
+
     return {"created": created, "failed": failed, "skipped": skipped}
 
 
@@ -345,6 +366,30 @@ async def update_crunchbase_airtable_records(
                 push_status=push_status,
                 response_data=response_data,
             )
+
+        # Record contacted companies on success
+        if push_status == "success":
+            from app.services.leadspicker_normalize import normalize_domain, make_fingerprint
+            from app.core.utils import normalize_company_name
+            for entry_id_c, _, _ in chunk:
+                entry_obj = next((e for e in ordered if e["id"] == entry_id_c), None)
+                if not entry_obj:
+                    continue
+                sig = entry_obj.get("signals") or {}
+                co = sig.get("companies") or {}
+                co_name = co.get("name_raw") or ""
+                co_domain = normalize_domain(co.get("website") or co.get("domain_normalized") or "")
+                try:
+                    await db.table("contacted_companies").insert({
+                        "company_name_normalized": normalize_company_name(co_name) if co_name else None,
+                        "domain_normalized": co_domain or None,
+                        "linkedin_url": co.get("linkedin_url") or None,
+                        "fingerprint": make_fingerprint(co_name, co_domain),
+                        "contacted_via": "crunchbase",
+                        "pipeline_entry_id": entry_id_c,
+                    }).execute()
+                except Exception:
+                    pass  # non-blocking
 
     return {"created": created, "failed": failed, "skipped": skipped}
 

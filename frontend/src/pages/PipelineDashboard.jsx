@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../lib/api'
-import { PIPELINES, pipelineLabel } from '../lib/pipeline'
+import { usePipelineConfigs } from '../context/PipelineConfigContext'
 import StatusBadge from '../components/StatusBadge'
 import ProgressBar from '../components/ProgressBar'
 import MessageBox from '../components/MessageBox'
@@ -23,10 +23,14 @@ function cbWorkflowStatus(entry) {
 
 export default function PipelineDashboard() {
   const { type = 'lp_general' } = useParams()
-  const pipelineCfg = useMemo(() => PIPELINES.find((p) => p.key === type) || PIPELINES[0], [type])
+  const { getConfig, getLabel, configs } = usePipelineConfigs()
+  const pipelineCfg = useMemo(() => {
+    const cfg = getConfig(type)
+    return cfg || { pipeline_key: type, label: type, airtable_table_name: '', source_type: 'leadspicker' }
+  }, [type, getConfig])
   const isLpCzech = type === 'lp_czech'
-  const isCrunchbase = type === 'crunchbase'
-  const isNews = type === 'news'
+  const isCrunchbase = pipelineCfg.source_type === 'crunchbase'
+  const isNews = pipelineCfg.source_type === 'news'
 
   const [projects, setProjects] = useState([])
   const [batches, setBatches] = useState([])
@@ -36,7 +40,7 @@ export default function PipelineDashboard() {
   const [selectedBatchId, setSelectedBatchId] = useState('')
   const [pushEntries, setPushEntries] = useState([])
   const [pushLoading, setPushLoading] = useState(false)
-  const [airtableTable, setAirtableTable] = useState(pipelineCfg.airtableTable)
+  const [airtableTable, setAirtableTable] = useState(pipelineCfg.airtable_table_name || '')
   const [analysisYesOnly, setAnalysisYesOnly] = useState(false)
 
   const [cbStatus, setCbStatus] = useState('')
@@ -79,7 +83,7 @@ export default function PipelineDashboard() {
         setSelectedProjectId(projectsData[0] ? String(projectsData[0].lp_project_id) : '')
         const relevant = batchesData.filter((b) => b.pipeline_type === type)
         setSelectedBatchId(relevant[0] ? relevant[0].id : '')
-        setAirtableTable(pipelineCfg.airtableTable)
+        setAirtableTable(pipelineCfg.airtable_table_name || '')
       } catch (err) {
         if (alive) {
           setMessage({ kind: 'error', text: String(err.message || err) })
@@ -94,7 +98,7 @@ export default function PipelineDashboard() {
     return () => {
       alive = false
     }
-  }, [type, pipelineCfg.airtableTable])
+  }, [type, pipelineCfg.airtable_table_name])
 
   useEffect(() => {
     if (!selectedBatchId) {
@@ -155,7 +159,7 @@ export default function PipelineDashboard() {
     return pushEntries.filter((e) => String(e?.signals?.ai_classifier || '').trim().toLowerCase() !== 'no')
   }, [pushEntries, analysisYesOnly])
 
-  const analysisUrl = (batchId) => `/analyze/${batchId}${analysisYesOnly ? '?ai_filter=yes' : ''}`
+  const analysisUrl = (batchId) => `/analyze/${type}/${batchId}${analysisYesOnly ? '?ai_filter=yes' : ''}`
 
   async function refreshProjects() {
     setBusy(true)
@@ -186,7 +190,6 @@ export default function PipelineDashboard() {
       const res = await api.importFromLp({
         projectIds: [Number(selectedProjectId)],
         pipelineType: type,
-        autoDedup: true,
       })
       setMessage({ kind: 'info', text: `Imported ${res.record_count} entries into batch ${String(res.batch_id).slice(0, 8)}...` })
       await loadBatches()
@@ -213,7 +216,6 @@ export default function PipelineDashboard() {
         view: cbView.trim() || undefined,
         maxRecords: Number(cbMaxRecords) || 200,
         tableName: airtableTable.trim() || undefined,
-        autoDedup: true,
       })
       setMessage({ kind: 'info', text: `Crunchbase import complete: ${res.record_count} entries.` })
       await loadBatches()
@@ -237,7 +239,6 @@ export default function PipelineDashboard() {
         sortBy: 'publishedAt',
         pageSize: Number(newsPageSize) || undefined,
         maxPages: Number(newsMaxPages) || undefined,
-        autoDedup: true,
       })
       setMessage({ kind: 'info', text: `News import complete: ${res.record_count} entries.` })
       await loadBatches()
@@ -258,8 +259,8 @@ export default function PipelineDashboard() {
     setMessage({ kind: 'info', text: '' })
     try {
       const res = isCrunchbase
-        ? await api.uploadCrunchbaseCsv({ file: csvFile, autoDedup: true })
-        : await api.uploadCsv({ file: csvFile, pipelineType: type, autoDedup: true })
+        ? await api.uploadCrunchbaseCsv({ file: csvFile })
+        : await api.uploadCsv({ file: csvFile, pipelineType: type })
       setMessage({ kind: 'info', text: `CSV imported: ${res.record_count} entries.` })
       await loadBatches()
     } catch (err) {
@@ -668,7 +669,7 @@ export default function PipelineDashboard() {
       ) : null}
 
       <section className="panel" style={{ display: 'grid', gap: '0.65rem' }}>
-        <h2 style={{ margin: 0, fontSize: '1rem' }}>Batches ({pipelineLabel(type)})</h2>
+        <h2 style={{ margin: 0, fontSize: '1rem' }}>Batches ({getLabel(type)})</h2>
 
         {pipelineBatches.length === 0 ? (
           <div style={{ color: 'var(--ink-soft)' }}>No batches for this pipeline yet.</div>

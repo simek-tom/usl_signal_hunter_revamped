@@ -70,58 +70,62 @@ def _clean_date(value: str) -> Optional[str]:
 async def process_news_import(
     db: AsyncClient,
     articles: list[NewsArticleData],
+    pipeline_key: str,
     batch_id: str,
 ) -> int:
     """
-    Persist normalized news articles to signals + pipeline_entries.
-    company_id/contact_id remain NULL until operator enrichment.
+    Write news articles to staging_news.
+    Dedup via UNIQUE(dedup_key) + ON CONFLICT DO NOTHING.
     """
     if not articles:
         return 0
 
-    now = datetime.now(timezone.utc).isoformat()
-    signal_rows = []
+    rows = []
     for a in articles:
         if not a.content_url:
             continue
-        signal_rows.append(
-            {
-                "company_id": None,
-                "source_type": "news",
-                "external_id": a.content_url,
-                "content_url": a.content_url,
-                "content_title": a.content_title or None,
-                "content_text": a.content_text or None,
-                "content_summary": (a.raw or {}).get("description") or None,
-                "source_robot": "newsapi",
-                "author_name": a.author_name or None,
-                "published_at": _clean_date(a.published_at),
-                "fetched_at": now,
-                "source_metadata": {
-                    "source_name": a.source_name or None,
-                    "source_id": a.source_id or None,
-                    "url_to_image": a.url_to_image or None,
-                    "raw": a.raw or {},
-                },
-            }
-        )
+        dedup = _normalize_url_for_dedup(a.content_url)
+        if not dedup:
+            continue
 
-    signal_ids: list[str] = []
-    for chunk in _chunks(signal_rows, 500):
-        res = await db.table("signals").insert(chunk).execute()
-        signal_ids.extend(row["id"] for row in (res.data or []))
-
-    entry_rows = [
-        {
-            "signal_id": sid,
-            "contact_id": None,
-            "pipeline_type": "news",
+        rows.append({
+            "pipeline_key": pipeline_key,
             "batch_id": batch_id,
-            "status": "new",
-        }
-        for sid in signal_ids
-    ]
-    for chunk in _chunks(entry_rows, 500):
-        await db.table("pipeline_entries").insert(chunk).execute()
+            "dedup_key": dedup,
+            "content_url": a.content_url,
+            "content_title": a.content_title or None,
+            "content_text": a.content_text or None,
+            "content_summary": (a.raw or {}).get("description") or None,
+            "article_author": a.author_name or None,
+            "source_name": a.source_name or None,
+            "source_id": a.source_id or None,
+            "published_at": _clean_date(a.published_at),
+            "url_to_image": a.url_to_image or None,
+            "source_metadata": {
+                "source_name": a.source_name or None,
+                "source_id": a.source_id or None,
+                "url_to_image": a.url_to_image or None,
+                "raw": a.raw or {},
+            },
+        })
 
-    return len(signal_ids)
+    inserted = 0
+    for chunk in _chunks(rows, 500):
+        res = (
+            await db.table("staging_news")
+            .upsert(chunk, on_conflict="dedup_key", ignore_duplicates=True)
+            .execute()
+        )
+        inserted += len(res.data or [])
+
+    return inserted
+
+
+def _normalize_url_for_dedup(url):
+    if not url:
+        return None
+    import re
+    u = url.lower().strip()
+    u = re.sub(r"^https?://", "", u)
+    u = re.sub(r"^www\.", "", u)
+    return u.rstrip("/") or None

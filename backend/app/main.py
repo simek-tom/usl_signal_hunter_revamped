@@ -8,7 +8,7 @@ from app.core.config import settings
 from app.core.runtime_config import load_runtime_env_overrides
 from app.core.supabase import get_supabase
 from app.api import health
-from app.api import settings_api, lp_projects, blacklist, import_lp, dedup, batches, entries, search, drafting, push, ai
+from app.api import settings_api, lp_projects, blacklist, import_lp, batches, entries, search, drafting, push, ai, pipeline_configs, staging
 
 
 def create_app() -> FastAPI:
@@ -33,8 +33,9 @@ def create_app() -> FastAPI:
     app.include_router(lp_projects.router, prefix="/api")
     app.include_router(blacklist.router, prefix="/api")
     app.include_router(import_lp.router, prefix="/api")
-    app.include_router(dedup.router, prefix="/api")
     app.include_router(batches.router, prefix="/api")
+    app.include_router(pipeline_configs.router, prefix="/api")
+    app.include_router(staging.router, prefix="/api")
     app.include_router(entries.router, prefix="/api")
     app.include_router(search.router, prefix="/api")
     app.include_router(drafting.router, prefix="/api")

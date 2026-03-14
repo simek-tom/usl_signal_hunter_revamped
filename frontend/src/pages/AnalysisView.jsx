@@ -98,10 +98,8 @@ export default function AnalysisView() {
       setLoading(true)
       setMessage({ kind: 'info', text: '' })
       try {
-        const [entriesData, contextData] = await Promise.all([
-          api.getBatchEntries(batchId),
-          api.getBatchContext(batchId),
-        ])
+        // pipelineKey must be passed as a query param or resolved from batch
+        const entriesData = await api.getStagingEntries(pipelineKey, batchId)
         if (!alive) {
           return
         }
@@ -136,10 +134,18 @@ export default function AnalysisView() {
   }, [batchId, aiFilterEnabled])
 
   const current = entries[currentIndex] || null
-  const signal = current?.signals || {}
-  const company = signal?.companies || {}
-  const contact = current?.contacts || {}
-  const aiClassifier = String(signal.ai_classifier || '').trim()
+  const aiClassifier = String(current?.ai_classifier || '').trim()
+  const companyName = current?.enriched_company_name || current?.company_name || ''
+  const companyWebsite = current?.enriched_company_website || current?.company_website || ''
+  const companyLinkedin = current?.enriched_company_linkedin || current?.company_linkedin || ''
+  const contactName = current?.enriched_contact_name || current?.author_full_name || ''
+  const contactLinkedin = current?.enriched_contact_linkedin || current?.author_linkedin || ''
+  // For CB:
+  const fundingSeries = current?.funding_series || ''
+  const lastFunding = current?.last_funding_amount || ''
+  // For News:
+  const headline = current?.content_title || ''
+  const articleAuthor = current?.article_author || ''
   const aiClassifierLower = aiClassifier.toLowerCase()
   const isCrunchbase = current?.pipeline_type === 'crunchbase'
   const isNews = current?.pipeline_type === 'news'
@@ -259,11 +265,7 @@ export default function AnalysisView() {
 
     setBusy(true)
     try {
-      await api.labelEntry({
-        entryId: current.id,
-        label,
-        learningData,
-      })
+      await api.labelStagingEntry({ pipelineKey, stagingId: current.id, label, learningData })
 
       setEntries((prev) => {
         const copy = [...prev]
@@ -296,7 +298,7 @@ export default function AnalysisView() {
 
     setBusy(true)
     try {
-      const res = await api.enrichEntry({ entryId: current.id, payload: enrichForm })
+      const res = await api.enrichStagingEntry({ pipelineKey, stagingId: current.id, payload: enrichForm })
       setEntries((prev) => {
         const copy = [...prev]
         copy[currentIndex] = res.entry
@@ -316,13 +318,7 @@ export default function AnalysisView() {
     }
     setBusy(true)
     try {
-      const res = await api.crunchbaseAction({
-        entryId: current.id,
-        payload: {
-          action,
-          ...cbForm,
-        },
-      })
+      const res = await api.cbStagingAction({ pipelineKey, stagingId: current.id, payload: { action, ...cbForm } })
 
       if (action === 'eliminate') {
         setEntries((prev) => prev.filter((_, idx) => idx !== currentIndex))

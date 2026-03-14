@@ -69,6 +69,7 @@ async def _run_import(
     batch_id = batch_result.data[0]["id"]
 
     count = await process_lp_import(db, people_raw, pipeline_type.value, batch_id)
+    # pipeline_type.value IS the pipeline_key (e.g. 'lp_general')
 
     # Update batch with final count
     await db.table("import_batches").update({"record_count": count}).eq(
@@ -105,7 +106,7 @@ async def _run_crunchbase_import(
     )
     batch_id = batch_result.data[0]["id"]
 
-    count = await process_crunchbase_import(db, rows, batch_id)
+    count = await process_crunchbase_import(db, rows, PipelineType.crunchbase.value, batch_id)
 
     await db.table("import_batches").update({"record_count": count}).eq(
         "id", batch_id
@@ -141,7 +142,7 @@ async def _run_news_import(
     )
     batch_id = batch_result.data[0]["id"]
 
-    count = await process_news_import(db, rows, batch_id)
+    count = await process_news_import(db, rows, PipelineType.news.value, batch_id)
 
     await db.table("import_batches").update({"record_count": count}).eq(
         "id", batch_id

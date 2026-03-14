@@ -192,14 +192,23 @@ async def push_to_leadspicker(
             # Always log the attempt (ok or error)
             await db.rpc(
                 "complete_push",
-                {
-                    "p_entry_id": eid,
-                    "p_target_system": "leadspicker",
-                    "p_target_project_id": str(project_id),
-                    "p_external_id": external_id,
-                    "p_push_status": push_status,
-                    "p_response_data": response_data,
-                },
+                { ... },
             ).execute()
+
+            # Record this company as contacted
+            if push_status == "success":
+                co = sig.get("companies") or {}
+                from app.services.leadspicker_normalize import normalize_domain, make_fingerprint
+                from app.core.utils import normalize_company_name
+                co_name = co.get("name_raw") or ""
+                co_domain = normalize_domain(co.get("website") or co.get("domain_normalized") or "")
+                await db.table("contacted_companies").insert({
+                    "company_name_normalized": normalize_company_name(co_name) if co_name else None,
+                    "domain_normalized": co_domain or None,
+                    "linkedin_url": co.get("linkedin_url") or None,
+                    "fingerprint": make_fingerprint(co_name, co_domain),
+                    "contacted_via": entry.get("pipeline_type"),
+                    "pipeline_entry_id": eid,
+                }).execute()
 
     return {"pushed": pushed, "failed": failed, "skipped": skipped}

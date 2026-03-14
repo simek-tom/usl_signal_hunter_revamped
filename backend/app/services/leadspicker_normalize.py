@@ -239,163 +239,67 @@ def _fp_or_filter(fps: list[str]) -> str:
     return ",".join(parts)
 
 
-async def process_lp_import(
-    db: AsyncClient,
-    people: list[PersonData],
-    pipeline_type: str,
-    batch_id: str,
-) -> int:
+async def process_lp_import(db, people: list[PersonData], pipeline_key: str, batch_id: str) -> int:
     """
-    Persist all people to Supabase using bulk inserts.
-
-    Request count:
-      - 1 bulk SELECT (fingerprints, chunked per 100, via or= filter)
-      - 1 bulk INSERT for new companies (chunked per 500)
-      - 1 RPC per unique *existing* company fingerprint (deduplicated)
-      - 1 bulk INSERT signals (chunked per 500)
-      - 1 bulk INSERT contacts (chunked per 500)
-      - 1 bulk INSERT pipeline_entries (chunked per 500)
-
-    Returns count of inserted pipeline entries.
+    Write LP records to staging_leadspicker.
+    Dedup is handled by UNIQUE(dedup_key) + ON CONFLICT DO NOTHING.
+    Returns count of newly inserted rows.
     """
     if not people:
         return 0
 
-    # ------------------------------------------------------------------
-    # Phase 1: resolve company_id for every person
-    # ------------------------------------------------------------------
-
-    # 1a. Compute fingerprint + domain per person (pure Python, no DB)
-    person_fps: list[Optional[str]] = []
-    fp_meta: dict[str, tuple[PersonData, str]] = {}  # fp -> (person, domain)
-
+    rows = []
     for p in people:
-        domain = normalize_domain(p.company_website)
-        fp = make_fingerprint(p.company_name, domain)
-        person_fps.append(fp)
-        if fp and fp not in fp_meta:
-            fp_meta[fp] = (p, domain)
+        url = (p.content_url or "").strip()
+        dedup = _normalize_url_for_dedup(url)
+        if not dedup:
+            continue
 
-    all_fps = list(fp_meta.keys())
-
-    # 1b. Bulk SELECT existing companies.
-    #     Use or=() with per-value quoting instead of in=() because
-    #     PostgREST in.() treats comma as a delimiter, causing fingerprints
-    #     that contain commas to silently fail to match.
-    existing_map: dict[str, str] = {}  # fingerprint -> company_id
-    for chunk in _chunks(all_fps, 100):
-        rows = (
-            await db.table("companies")
-            .select("id, fingerprint")
-            .or_(_fp_or_filter(chunk))
-            .execute()
-        )
-        for row in rows.data:
-            existing_map[row["fingerprint"]] = row["id"]
-
-    # 1c. Bulk INSERT new companies
-    new_fps_set = {fp for fp in all_fps if fp not in existing_map}
-    if new_fps_set:
-        new_rows = []
-        for fp in new_fps_set:
-            p, domain = fp_meta[fp]
-            new_rows.append(
-                {
-                    "name_raw": p.company_name,
-                    "domain_normalized": domain or None,
-                    "linkedin_url": p.company_linkedin or None,
-                    "linkedin_url_cleaned": p.company_linkedin or None,
-                    "website": p.company_website or None,
-                    "country": p.company_country or None,
-                    "employee_count": p.company_employee_count or None,
-                    "fingerprint": fp,
-                }
-            )
-        for chunk in _chunks(new_rows, 500):
-            result = await db.table("companies").insert(chunk).execute()
-            for row in result.data:
-                existing_map[row["fingerprint"]] = row["id"]
-
-    # 1d. Enrich existing companies — one RPC per unique fingerprint (deduplicated)
-    for fp, (p, domain) in fp_meta.items():
-        if fp not in new_fps_set and fp in existing_map:
-            await db.rpc(
-                "enrich_company",
-                {
-                    "p_id": existing_map[fp],
-                    "p_domain": domain or None,
-                    "p_linkedin_url": p.company_linkedin or None,
-                    "p_website": p.company_website or None,
-                    "p_country": p.company_country or None,
-                    "p_employee_count": p.company_employee_count or None,
-                    "p_enriched_by": "leadspicker",
-                },
-            ).execute()
-
-    # Resolve company_id per person (None if no fingerprint)
-    company_ids = [existing_map.get(fp) if fp else None for fp in person_fps]
-
-    # ------------------------------------------------------------------
-    # Phase 2: Bulk INSERT signals
-    # ------------------------------------------------------------------
-    signal_rows = [
-        {
-            "company_id": cid,
-            "source_type": "leadspicker",
-            "external_id": p.external_id or None,
+        rows.append({
+            "pipeline_key": pipeline_key,
+            "batch_id": batch_id,
+            "dedup_key": dedup,
+            "content_url": url or None,
             "content_text": p.content_text or None,
-            "content_url": p.content_url or None,
             "content_summary": p.content_summary or None,
             "ai_classifier": p.ai_classifier or None,
+            "author_first_name": p.first_name or None,
+            "author_last_name": p.last_name or None,
+            "author_full_name": f"{p.first_name} {p.last_name}".strip() or None,
+            "author_linkedin": p.contact_linkedin or None,
+            "author_position": p.position or None,
+            "company_name": p.company_name or None,
+            "company_website": p.company_website or None,
+            "company_linkedin": p.company_linkedin or None,
+            "company_country": p.company_country or None,
+            "company_employee_count": p.company_employee_count or None,
+            "external_id": p.external_id or None,
             "source_robot": p.source_robot or None,
             "source_metadata": {
                 "lp_left_out": p.lp_left_out,
                 "lp_replied": p.lp_replied,
                 "lp_project_id": p.lp_project_id,
             },
-        }
-        for p, cid in zip(people, company_ids)
-    ]
-    signal_ids: list[str] = []
-    for chunk in _chunks(signal_rows, 500):
-        res = await db.table("signals").insert(chunk).execute()
-        signal_ids.extend(r["id"] for r in res.data)
+        })
 
-    # ------------------------------------------------------------------
-    # Phase 3: Bulk INSERT contacts
-    # ------------------------------------------------------------------
-    contact_rows = [
-        {
-            "company_id": cid,
-            "first_name": p.first_name or None,
-            "last_name": p.last_name or None,
-            "full_name": f"{p.first_name} {p.last_name}".strip() or None,
-            "linkedin_url": p.contact_linkedin or None,
-            "email": p.email or None,
-            "relation_to_company": p.position or None,
-            "source": "leadspicker",
-        }
-        for p, cid in zip(people, company_ids)
-    ]
-    contact_ids: list[str] = []
-    for chunk in _chunks(contact_rows, 500):
-        res = await db.table("contacts").insert(chunk).execute()
-        contact_ids.extend(r["id"] for r in res.data)
+    inserted = 0
+    for chunk in _chunks(rows, 500):
+        res = (
+            await db.table("staging_leadspicker")
+            .upsert(chunk, on_conflict="dedup_key", ignore_duplicates=True)
+            .execute()
+        )
+        inserted += len(res.data or [])
 
-    # ------------------------------------------------------------------
-    # Phase 4: Bulk INSERT pipeline_entries
-    # ------------------------------------------------------------------
-    entry_rows = [
-        {
-            "signal_id": sid,
-            "contact_id": cid,
-            "pipeline_type": pipeline_type,
-            "batch_id": batch_id,
-            "status": "new",
-        }
-        for sid, cid in zip(signal_ids, contact_ids)
-    ]
-    for chunk in _chunks(entry_rows, 500):
-        await db.table("pipeline_entries").insert(chunk).execute()
+    return inserted
 
-    return len(people)
+
+def _normalize_url_for_dedup(url: str) -> str | None:
+    """Normalize URL for dedup key. Same logic as old dedup._normalize_url."""
+    if not url:
+        return None
+    import re
+    u = url.lower().strip()
+    u = re.sub(r"^https?://", "", u)
+    u = re.sub(r"^www\.", "", u)
+    return u.rstrip("/") or None

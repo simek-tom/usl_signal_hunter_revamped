@@ -1,6 +1,11 @@
 import os
+import sys
 import threading
 import webbrowser
+from pathlib import Path
+
+# Make the backend package importable when running from the project root.
+sys.path.insert(0, str(Path(__file__).parent / "backend"))
 
 import uvicorn
 

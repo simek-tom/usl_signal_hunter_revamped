@@ -7,6 +7,13 @@ then calls complete_push RPC to atomically log + update status.
 
 push_row_limit is read from the `settings` table (key='push_row_limit').
 Default: 100 if not set.
+
+push_map (from pipeline config's push_column_map) controls the
+custom_fields object sent to LP. Format: {lp_key: internal_field}.
+Available internal_field values: content_url, content_text,
+content_summary, ai_classifier, first_name, last_name, email,
+contact_linkedin, position, company_name, company_website,
+company_linkedin, country, message.
 """
 
 from typing import Optional
@@ -61,7 +68,12 @@ def _cb_message_text(entry: dict) -> str:
     )
 
 
-def _build_lp_payload(entry: dict, *, message_text: str = "") -> dict:
+def _build_lp_payload(
+    entry: dict,
+    *,
+    message_text: str = "",
+    push_map: dict | None = None,
+) -> dict:
     sig = entry.get("signals") or {}
     co = sig.get("companies") or {}
     ct = entry.get("contacts") or {}
@@ -70,12 +82,39 @@ def _build_lp_payload(entry: dict, *, message_text: str = "") -> dict:
         meta = {}
     linkedin_url = ct.get("linkedin_url") or meta.get("main_contact") or ""
 
-    custom_fields = {
-        "base_post_url": sig.get("content_url") or "",
+    # Resolve internal field values for custom_fields mapping
+    _field_values = {
+        "content_url": sig.get("content_url") or "",
+        "content_text": sig.get("content_text") or "",
+        "content_summary": sig.get("content_summary") or "",
+        "ai_classifier": str(sig.get("ai_classifier") or ""),
+        "first_name": ct.get("first_name") or "",
+        "last_name": ct.get("last_name") or "",
+        "email": ct.get("email") or "",
+        "contact_linkedin": ct.get("linkedin_url") or "",
+        "position": ct.get("relation_to_company") or "",
+        "company_name": co.get("name_raw") or "",
+        "company_website": co.get("website") or co.get("domain_normalized") or "",
+        "company_linkedin": co.get("linkedin_url") or "",
+        "country": co.get("country") or "",
+        "message": message_text,
     }
-    if message_text:
-        custom_fields["message_text"] = message_text
-        custom_fields["general_message"] = message_text
+
+    if push_map:
+        # Custom mapping: {lp_custom_field_key: internal_field_name}
+        custom_fields = {
+            lp_key: _field_values[internal]
+            for lp_key, internal in push_map.items()
+            if internal in _field_values and _field_values[internal]
+        }
+    else:
+        # Default behaviour
+        custom_fields = {
+            "base_post_url": sig.get("content_url") or "",
+        }
+        if message_text:
+            custom_fields["message_text"] = message_text
+            custom_fields["general_message"] = message_text
 
     return {
         "first_name": ct.get("first_name") or "",
@@ -87,7 +126,6 @@ def _build_lp_payload(entry: dict, *, message_text: str = "") -> dict:
         "company_website": co.get("website") or co.get("domain_normalized") or "",
         "company_linkedin": co.get("linkedin_url") or "",
         "country": co.get("country") or "",
-        # LP accepts arbitrary metadata via custom_fields.
         "custom_fields": custom_fields,
     }
 
@@ -96,9 +134,13 @@ async def push_to_leadspicker(
     db: AsyncClient,
     entry_ids: list[str],
     project_id: int,
+    push_map: dict | None = None,
 ) -> dict:
     """
     Push entries to a LeadsPicker project.
+
+    push_map overrides the default custom_fields mapping.
+    Format: {lp_custom_field_key: internal_field_name}
 
     Returns {pushed, failed, skipped} where:
       pushed  — successfully sent to LP + logged
@@ -110,10 +152,8 @@ async def push_to_leadspicker(
 
     limit = await _get_push_row_limit(db)
     if len(entry_ids) > limit:
-        # Truncate to limit — caller should be aware
         entry_ids = entry_ids[:limit]
 
-    # Fetch entries with joins
     from app.services.leadspicker_normalize import _chunks
     entries: list[dict] = []
     for chunk in _chunks(entry_ids, 200):
@@ -125,12 +165,11 @@ async def push_to_leadspicker(
         )
         entries.extend(res.data or [])
 
-    # Index by id to preserve order
     entry_map = {e["id"]: e for e in entries}
 
     pushed = 0
     failed = 0
-    skipped = len(entry_ids) - len(entries)  # IDs that didn't resolve
+    skipped = len(entry_ids) - len(entries)
 
     async with lp_session() as (client, headers):
         for eid in entry_ids:
@@ -155,9 +194,10 @@ async def push_to_leadspicker(
                 if not msg:
                     skipped += 1
                     continue
-                payload = _build_lp_payload(entry, message_text=msg)
+                payload = _build_lp_payload(entry, message_text=msg, push_map=push_map)
             else:
-                payload = _build_lp_payload(entry)
+                payload = _build_lp_payload(entry, push_map=push_map)
+
             external_id: Optional[str] = None
             push_status = "success"
             response_data: Optional[dict] = None
@@ -189,7 +229,6 @@ async def push_to_leadspicker(
                 response_data = {"error": str(exc)[:500]}
                 failed += 1
 
-            # Always log the attempt (ok or error)
             await db.rpc(
                 "complete_push",
                 {
@@ -202,7 +241,6 @@ async def push_to_leadspicker(
                 },
             ).execute()
 
-            # Record this company as contacted
             if push_status == "success":
                 co = sig.get("companies") or {}
                 from app.services.leadspicker_normalize import normalize_domain, make_fingerprint

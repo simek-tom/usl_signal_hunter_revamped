@@ -8,7 +8,7 @@ from app.core.config import settings
 from app.core.runtime_config import load_runtime_env_overrides
 from app.core.supabase import get_supabase
 from app.api import health
-from app.api import settings_api, lp_projects, blacklist, import_lp, batches, entries, search, drafting, push, ai, pipeline_configs, staging
+from app.api import settings_api, lp_projects, blacklist, import_lp, batches, entries, search, drafting, push, ai, pipeline_configs, staging, pipeline as pipeline_api
 
 
 def create_app() -> FastAPI:
@@ -41,6 +41,7 @@ def create_app() -> FastAPI:
     app.include_router(drafting.router, prefix="/api")
     app.include_router(push.router, prefix="/api")
     app.include_router(ai.router, prefix="/api")
+    app.include_router(pipeline_api.router, prefix="/api")
 
     @app.on_event("startup")
     async def startup_load_runtime_overrides():

@@ -14,11 +14,13 @@ router = APIRouter(prefix="/push", tags=["push"])
 class PushLpRequest(BaseModel):
     entry_ids: list[str]
     project_id: int
+    pipeline_key: str | None = None
 
 
 class PushAirtableRequest(BaseModel):
     entry_ids: list[str]
     table_name: str | None = None
+    pipeline_key: str | None = None
 
 
 async def _resolve_airtable_table(
@@ -102,7 +104,26 @@ async def push_leadspicker(
     """
     if not body.entry_ids:
         return {"pushed": 0, "failed": 0, "skipped": 0}
-    return await push_to_leadspicker(db, body.entry_ids, body.project_id)
+
+    # Load per-pipeline push column map from pipeline config
+    push_map = None
+    if body.pipeline_key:
+        try:
+            cfg_res = (
+                await db.table("pipeline_configs")
+                .select("default_import_params")
+                .eq("pipeline_key", body.pipeline_key)
+                .eq("is_active", True)
+                .limit(1)
+                .execute()
+            )
+            if cfg_res.data:
+                params = cfg_res.data[0].get("default_import_params") or {}
+                push_map = params.get("push_column_map") or None
+        except Exception:
+            pass  # mapping is optional; proceed without it
+
+    return await push_to_leadspicker(db, body.entry_ids, body.project_id, push_map=push_map)
 
 
 # ---------------------------------------------------------------------------
@@ -121,8 +142,27 @@ async def push_airtable(
     if not body.entry_ids:
         return {"created": 0, "failed": 0, "skipped": 0}
     table_name = await _resolve_airtable_table(db, body.entry_ids, body.table_name)
+
+    # Load airtable_push_column_map from pipeline config if pipeline_key provided
+    push_map = None
+    if body.pipeline_key:
+        try:
+            cfg_res = (
+                await db.table("pipeline_configs")
+                .select("default_import_params")
+                .eq("pipeline_key", body.pipeline_key)
+                .eq("is_active", True)
+                .limit(1)
+                .execute()
+            )
+            if cfg_res.data:
+                params = cfg_res.data[0].get("default_import_params") or {}
+                push_map = params.get("airtable_push_column_map") or None
+        except Exception:
+            pass  # optional; proceed without it
+
     try:
-        return await push_entries_to_airtable(db, body.entry_ids, table_name)
+        return await push_entries_to_airtable(db, body.entry_ids, table_name, push_map=push_map)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 

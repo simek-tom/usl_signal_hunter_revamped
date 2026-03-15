@@ -4,16 +4,30 @@ import { api } from '../lib/api'
 import { highlightText } from '../lib/keywords'
 import MessageBox from '../components/MessageBox'
 import ProgressBar from '../components/ProgressBar'
-import CrunchbaseDiscover from '../components/CrunchbaseDiscover'
+import CrunchbaseDiscover, { crunchbaseOpenUrl, crunchbaseTextSearchUrl } from '../components/CrunchbaseDiscover'
 
-const LINKEDIN_KEYWORDS = [
-  'country manager',
-  'business development',
-  'partnerships',
-  'sales lead',
-  'head of growth',
-  'founder',
+const LINKEDIN_PEOPLE_BUTTONS = [
+  { label: 'Partnership', keyword: 'partnership' },
+  { label: 'Expansion',   keyword: 'expansion' },
+  { label: 'CEO',         keyword: 'ceo' },
+  { label: 'Founder',     keyword: 'founder' },
+  { label: 'Strategy',    keyword: 'strategy' },
+  { label: 'Region',      keyword: 'czech OR slovak OR prague' },
 ]
+
+function linkedinCompanySlug(linkedinUrl) {
+  const raw = String(linkedinUrl || '').trim()
+  if (!raw) return ''
+  const m = raw.match(/linkedin\.com\/company\/([^/?#]+)/)
+  if (m) return m[1]
+  return raw.replace(/^\/+|\/+$/g, '')
+}
+
+function linkedinPeopleUrl(linkedinUrl, keyword) {
+  const slug = linkedinCompanySlug(linkedinUrl)
+  if (!slug) return ''
+  return `https://www.linkedin.com/company/${slug}/people/?keywords=${encodeURIComponent(keyword)}`
+}
 
 function normalizeText(value) {
   return String(value || '')
@@ -27,7 +41,7 @@ function isLpPipeline(sourceType) {
 }
 
 export default function AnalysisView() {
-  const { pipelineKey, batchId } = useParams()
+  const { pipelineKey } = useParams()
   const [searchParams] = useSearchParams()
 
   const [loading, setLoading] = useState(true)
@@ -69,7 +83,7 @@ export default function AnalysisView() {
       setLoading(true)
       setMessage({ kind: 'info', text: '' })
       try {
-        const data = await api.getStagingEntries(pipelineKey, batchId)
+        const data = await api.getStagingEntries(pipelineKey, { unlabeledOnly: true })
         if (!alive) return
         const filtered = aiFilterEnabled
           ? data.filter((row) => String(row?.ai_classifier || '').trim().toLowerCase() !== 'no')
@@ -87,7 +101,7 @@ export default function AnalysisView() {
     }
     load()
     return () => { alive = false }
-  }, [pipelineKey, batchId, aiFilterEnabled])
+  }, [pipelineKey, aiFilterEnabled])
 
   const current = entries[currentIndex] || null
 
@@ -105,6 +119,10 @@ export default function AnalysisView() {
   const contactPosition = current?.enriched_contact_position || current?.author_position || ''
   const aiClassifier = String(current?.ai_classifier || '').trim()
   const aiClassifierLower = aiClassifier.toLowerCase()
+
+  // Crunchbase URL helpers for left-sidebar buttons
+  const cbOrganizationUrl = crunchbaseOpenUrl(companyName)
+  const cbDiscoverTextUrl = crunchbaseTextSearchUrl(companyName)
 
   // CB-specific fields
   const fundingSeries = current?.funding_series || 'n/a'
@@ -159,19 +177,6 @@ export default function AnalysisView() {
     }
   }, [currentIndex, current?.id])
 
-  const progress = useMemo(() => {
-    const total = entries.length
-    let labeled = 0, yes = 0, no = 0, cc = 0, pushedReady = 0
-    for (const e of entries) {
-      if (e.label) labeled++
-      if (e.label === 'yes') yes++
-      if (e.label === 'no') no++
-      if (e.label === 'cc') cc++
-      if (e.workflow_status === 'pushed-ready') pushedReady++
-    }
-    return { total, labeled, yes, no, cc, pushedReady }
-  }, [entries])
-
   const goNext = useCallback(() => setCurrentIndex((i) => Math.min(entries.length - 1, i + 1)), [entries.length])
   const goPrev = useCallback(() => setCurrentIndex((i) => Math.max(0, i - 1)), [])
 
@@ -179,14 +184,20 @@ export default function AnalysisView() {
     if (!current) return
     setBusy(true)
     try {
-      const res = await api.labelStagingEntry({ pipelineKey, stagingId: current.id, label, learningData })
+      await api.labelStagingEntry({ pipelineKey, stagingId: current.id, label, learningData })
       setEntries((prev) => {
         const copy = [...prev]
-        copy[currentIndex] = res.entry
+        copy[currentIndex] = { ...current, label }
         return copy
       })
       if (label === 'yes') setEnrichOpen(true)
-      setMessage({ kind: 'info', text: `Saved label ${label.toUpperCase()}.` })
+      if (label === 'no') {
+        // auto-advance, but keep entry in list so back button works
+        setCurrentIndex((idx) => Math.min(entries.length - 1, idx + 1))
+        setMessage({ kind: 'info', text: 'NO — moved to next.' })
+      } else {
+        setMessage({ kind: 'info', text: `Saved ${label.toUpperCase()}.` })
+      }
     } catch (err) {
       setMessage({ kind: 'error', text: String(err.message || err) })
     } finally {
@@ -200,6 +211,8 @@ export default function AnalysisView() {
     try {
       const res = await api.enrichStagingEntry({ pipelineKey, stagingId: current.id, payload: enrichForm })
       setEntries((prev) => { const c = [...prev]; c[currentIndex] = res.entry; return c })
+      setEnrichOpen(false)
+      setCurrentIndex((idx) => Math.min(entries.length - 1, idx + 1))
       setMessage({ kind: 'info', text: 'Enrichment saved.' })
     } catch (err) {
       setMessage({ kind: 'error', text: String(err.message || err) })
@@ -232,7 +245,7 @@ export default function AnalysisView() {
   async function finishAnalysis() {
     setBusy(true)
     try {
-      const res = await api.finishAnalysis({ pipelineKey, batchId })
+      const res = await api.finishAnalysis(pipelineKey)
       setMessage({ kind: 'info', text: `Finish Analysis: promoted ${res.promoted}, skipped ${res.skipped}.` })
     } catch (err) {
       setMessage({ kind: 'error', text: String(err.message || err) })
@@ -275,9 +288,12 @@ export default function AnalysisView() {
   if (!current) {
     return (
       <section className="panel" style={{ display: 'grid', gap: '0.6rem' }}>
-        <h1 style={{ margin: 0 }}>Analysis</h1>
-        <MessageBox kind="warn" text={aiFilterEnabled ? 'No entries after AI filter.' : 'No entries in this batch.'} />
-        <Link className="btn" to="/">Back to Dashboard</Link>
+        <h1 style={{ margin: 0 }}>Analysis · {pipelineKey}</h1>
+        <MessageBox kind="warn" text="No unlabeled entries remaining." />
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <Link className="btn" to={`/pipeline/${pipelineKey}`}>Back to Pipeline</Link>
+          <button className="btn warn" disabled={busy} onClick={finishAnalysis}>Finish Analysis (Promote)</button>
+        </div>
       </section>
     )
   }
@@ -286,32 +302,26 @@ export default function AnalysisView() {
   return (
     <>
       {/* Header */}
-      <section className="panel" style={{ display: 'grid', gap: '0.65rem' }}>
+      <section className="panel" style={{ display: 'grid', gap: '0.5rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.8rem', flexWrap: 'wrap' }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: '1.25rem' }}>Analysis · Batch {batchId.slice(0, 8)}...</h1>
-            <div style={{ fontSize: '0.76rem', color: 'var(--ink-soft)' }}>
-              Hotkeys: <span className="kbd">Y</span> YES · <span className="kbd">N</span> {isCrunchbase ? 'Eliminate' : 'NO'} · <span className="kbd">←/→</span> nav
+            <h1 style={{ margin: 0, fontSize: '1.15rem' }}>Analysis · {pipelineKey}</h1>
+            <div style={{ fontSize: '0.73rem', color: 'var(--ink-soft)' }}>
+              <span className="kbd">Y</span> YES · <span className="kbd">N</span> NO (auto-advance) · <span className="kbd">←/→</span> nav
             </div>
           </div>
-          <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.78rem', color: 'var(--ink-soft)' }}>{currentIndex + 1} / {entries.length}</span>
             <Link className="btn" to={`/pipeline/${pipelineKey}`}>Pipeline</Link>
             <button className="btn warn" disabled={busy} onClick={finishAnalysis}>Finish Analysis</button>
-            {!isCrunchbase ? <Link className="btn" to={`/draft/${batchId}`}>Go to Drafting</Link> : null}
+            {!isCrunchbase ? <Link className="btn" to={`/draft/${pipelineKey}`}>Go to Drafting</Link> : null}
           </div>
         </div>
-        <MessageBox kind={message.kind} text={message.text} />
-        <div style={{ display: 'grid', gap: '0.4rem' }}>
-          <div style={{ fontSize: '0.78rem', color: 'var(--ink-soft)' }}>
-            Entry {currentIndex + 1}/{entries.length} · YES {progress.yes} · NO {progress.no} · CC {progress.cc}
-            {isCrunchbase ? ` · pushed-ready ${progress.pushedReady}` : ''}
-          </div>
-          <ProgressBar value={progress.labeled} total={Math.max(progress.total, 1)} />
-        </div>
+        {message.text ? <MessageBox kind={message.kind} text={message.text} /> : null}
       </section>
 
       {isCrunchbase ? (
-        /* ---- CRUNCHBASE LAYOUT ---- */
+        /* ---- CRUNCHBASE LAYOUT (unchanged) ---- */
         <section className="grid-2" style={{ alignItems: 'start' }}>
           <article className="panel" style={{ display: 'grid', gap: '0.7rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: '0.7rem' }}>
@@ -321,9 +331,6 @@ export default function AnalysisView() {
                   {companyWebsite ? <a href={companyWebsite} target="_blank" rel="noreferrer">{companyWebsite}</a> : 'No website'}
                 </div>
               </div>
-              <span className={`badge ${(current.ai_pre_score || 0) > 0.7 ? 'green' : (current.ai_pre_score || 0) > 0.4 ? 'amber' : 'gray'}`}>
-                AI score {Number(current.ai_pre_score || 0).toFixed(2)}
-              </span>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
               {contactedStatus.is_contacted ? <span className="badge amber">ALREADY CONTACTED</span> : null}
@@ -390,78 +397,120 @@ export default function AnalysisView() {
         </section>
       ) : (
         /* ---- LP / NEWS LAYOUT ---- */
-        <section className="grid-2" style={{ alignItems: 'start' }}>
-          <article className="panel" style={{ display: 'grid', gap: '0.7rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: '0.7rem' }}>
-              <div>
-                <div style={{ fontWeight: 700 }}>{isNews ? articleAuthor || 'Unknown author' : contactName || 'Unknown author'}</div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--ink-soft)' }}>
-                  {!isNews && contactLinkedin ? <a href={contactLinkedin} target="_blank" rel="noreferrer">{contactLinkedin}</a> : isNews ? `Source: ${current?.source_name || 'n/a'}` : 'No profile'}
-                </div>
-              </div>
-              <span className={`badge ${(current.ai_pre_score || 0) > 0.7 ? 'green' : (current.ai_pre_score || 0) > 0.4 ? 'amber' : 'gray'}`}>
-                AI score {Number(current.ai_pre_score || 0).toFixed(2)}
-              </span>
-            </div>
+        <section style={{ display: 'grid', gridTemplateColumns: '115px 1fr', gap: '1rem', alignItems: 'start', padding: '0 0 1rem' }}>
 
-            {isNews ? (
-              <div style={{ display: 'grid', gap: '0.35rem', fontSize: '0.84rem' }}>
-                <div><strong>Headline:</strong> {headline}</div>
-                <div><strong>Published:</strong> {current?.published_at ? new Date(current.published_at).toLocaleString() : 'n/a'}</div>
-                <div><strong>URL:</strong> {current?.content_url ? <a href={current.content_url} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>{current.content_url}</a> : 'n/a'}</div>
-                <div><strong>Company:</strong> {companyName || 'Not identified yet'}</div>
+          {/* LEFT: external link buttons */}
+          <div style={{ display: 'grid', gap: '0.45rem', paddingTop: '0.1rem' }}>
+            {isLp && current?.content_url ? (
+              <a
+                className="btn"
+                href={current.content_url}
+                target="_blank"
+                rel="noreferrer"
+                style={{ fontSize: '0.73rem', padding: '0.35rem 0.5rem', textAlign: 'center', lineHeight: 1.35 }}
+              >
+                Open LinkedIn post
+              </a>
+            ) : isLp ? (
+              <button className="btn" disabled style={{ fontSize: '0.73rem', padding: '0.35rem 0.5rem' }}>Open LinkedIn post</button>
+            ) : null}
+            <button
+              className="btn"
+              disabled={!cbOrganizationUrl}
+              onClick={() => window.open(cbOrganizationUrl, '_blank', 'noopener,noreferrer')}
+              style={{ fontSize: '0.73rem', padding: '0.35rem 0.5rem' }}
+            >
+              Open on Crunchbase
+            </button>
+            <button
+              className="btn"
+              disabled={!cbDiscoverTextUrl}
+              onClick={() => window.open(cbDiscoverTextUrl, '_blank', 'noopener,noreferrer')}
+              style={{ fontSize: '0.73rem', padding: '0.35rem 0.5rem' }}
+            >
+              Open Discover (MD5)
+            </button>
+          </div>
+
+          {/* RIGHT: main content */}
+          <div style={{ display: 'grid', gap: '0.75rem' }}>
+
+            {/* Lead info */}
+            <div className="panel" style={{ margin: 0, padding: '0.85rem 1rem', display: 'grid', gap: '0.3rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 700, fontSize: '1rem' }}>
+                  {contactLinkedin
+                    ? <a href={contactLinkedin} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline', color: 'inherit' }}>{isNews ? articleAuthor || 'Unknown author' : contactName || 'Unknown'}</a>
+                    : (isNews ? articleAuthor || 'Unknown author' : contactName || 'Unknown')}
+                </span>
+                {contactedStatus.is_contacted && <span className="badge amber">ALREADY CONTACTED</span>}
+                {current.label && <span className="badge green">Label {current.label.toUpperCase()}</span>}
+                {aiClassifier && <span className={`badge ${aiClassifierLower === 'yes' ? 'green' : aiClassifierLower === 'no' ? 'red' : 'gray'}`}>AI: {aiClassifier}</span>}
               </div>
-            ) : (
-              <>
-                <div style={{ fontSize: '0.86rem' }}>
+              {!isNews && (
+                <div style={{ fontSize: '0.84rem' }}>
                   <strong>Company:</strong>{' '}
-                  {companyLinkedin ? <a href={companyLinkedin} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>{companyName || 'Unknown'}</a>
-                    : companyWebsite ? <a href={companyWebsite} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>{companyName || companyWebsite}</a>
+                  {companyLinkedin
+                    ? <a href={companyLinkedin} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>{companyName || 'Unknown'}</a>
+                    : companyWebsite
+                    ? <a href={companyWebsite} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>{companyName || companyWebsite}</a>
                     : companyName || 'Unknown'}
                 </div>
-                <div style={{ fontSize: '0.82rem', color: 'var(--ink-soft)' }}><strong>Position:</strong> {contactPosition || 'n/a'}</div>
-              </>
-            )}
-
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              {contactedStatus.is_contacted ? <span className="badge amber">ALREADY CONTACTED</span> : null}
-              {aiClassifier ? <span className={`badge ${aiClassifierLower === 'yes' ? 'green' : aiClassifierLower === 'no' ? 'red' : 'gray'}`}>AI classifier: {aiClassifier}</span> : <span className="badge gray">AI classifier: n/a</span>}
-              {current.learning_data ? <span className="badge gray">Learning Data</span> : null}
-              {current.label ? <span className="badge green">Label {current.label.toUpperCase()}</span> : null}
+              )}
+              {contactPosition && <div style={{ fontSize: '0.82rem', color: 'var(--ink-soft)' }}><strong>Position:</strong> {contactPosition}</div>}
+              {isNews && (
+                <>
+                  <div style={{ fontSize: '0.84rem' }}><strong>Headline:</strong> {headline}</div>
+                  <div style={{ fontSize: '0.82rem', color: 'var(--ink-soft)' }}>
+                    {current?.source_name && <span>Source: {current.source_name}</span>}
+                    {current?.published_at && <span style={{ marginLeft: '0.65rem' }}>{new Date(current.published_at).toLocaleDateString()}</span>}
+                    {current?.content_url && <span style={{ marginLeft: '0.65rem' }}><a href={current.content_url} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>Open article</a></span>}
+                  </div>
+                  {companyName && <div style={{ fontSize: '0.84rem' }}><strong>Company:</strong> {companyName}</div>}
+                </>
+              )}
             </div>
 
-            <div className="panel" style={{ margin: 0, padding: '0.8rem', background: '#fff' }}>
-              <div style={{ fontSize: '0.76rem', color: 'var(--ink-soft)', marginBottom: '0.45rem' }}>{isNews ? 'Article content' : 'Post text'}</div>
-              <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.45, fontSize: '0.84rem' }}>
-                {highlightText(current?.content_text || '').map((part, idx) => part.hit ? <mark className="marked-hit" key={idx}>{part.value}</mark> : <span key={idx}>{part.value}</span>)}
+            {/* Summary */}
+            {current?.content_summary ? (
+              <div className="panel" style={{ margin: 0, padding: '0.8rem 1rem', background: '#fdfbf5' }}>
+                <div style={{ fontSize: '0.7rem', color: 'var(--ink-soft)', marginBottom: '0.35rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Summary</div>
+                <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.84rem', lineHeight: 1.5 }}>{current.content_summary}</div>
+              </div>
+            ) : null}
+
+            {/* Post text — central element */}
+            <div className="panel" style={{ margin: 0, padding: '1rem 1.1rem', background: '#fff' }}>
+              <div style={{ fontSize: '0.7rem', color: 'var(--ink-soft)', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                {isNews ? 'Article content' : 'Post text'}
+              </div>
+              <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.4, fontSize: '0.9rem' }}>
+                {highlightText(current?.content_text || '').map((part, idx) =>
+                  part.hit ? <mark className="marked-hit" key={idx}>{part.value}</mark> : <span key={idx}>{part.value}</span>
+                )}
               </div>
             </div>
 
-            <div className="panel" style={{ margin: 0, padding: '0.8rem', background: '#fff' }}>
-              <div style={{ fontSize: '0.76rem', color: 'var(--ink-soft)', marginBottom: '0.4rem' }}>{isNews ? 'Article summary' : 'Summary'}</div>
-              <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.82rem' }}>{current?.content_summary || 'No summary.'}</div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-              {isLp && current?.content_url ? <a className="btn" href={current.content_url} target="_blank" rel="noreferrer">Open LinkedIn post</a> : null}
-              <CrunchbaseDiscover companyName={enrichForm.enriched_company_name || companyName} />
-            </div>
-
-            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+            {/* Action buttons */}
+            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center' }}>
               <button className="btn primary" disabled={busy} onClick={() => applyLabel('yes')}>YES <span className="kbd">Y</span></button>
-              <button className="btn" disabled={busy} onClick={() => applyLabel('no')}>NO <span className="kbd">N</span></button>
+              <button className="btn danger" disabled={busy} onClick={() => applyLabel('no')}>NO <span className="kbd">N</span></button>
               <button className="btn" disabled={busy} onClick={() => applyLabel('no', true)}>NO + Learning</button>
               {pipelineKey === 'lp_czech' ? <button className="btn cc" disabled={busy} onClick={() => applyLabel('cc')}>CC <span className="kbd">C</span></button> : null}
-              <button className="btn" onClick={goPrev}>Back</button>
+              <button className="btn" onClick={goPrev} style={{ marginLeft: '0.25rem' }}>Back</button>
               <button className="btn" onClick={goNext}>Skip</button>
             </div>
-          </article>
 
-          <aside style={{ display: 'grid', gap: '0.7rem' }}>
-            <section className="panel" style={{ display: 'grid', gap: '0.55rem' }}>
-              <h2 style={{ margin: 0, fontSize: '0.95rem' }}>Master Search</h2>
+            {/* Master search */}
+            <div className="panel" style={{ margin: 0, padding: '0.85rem 1rem', display: 'grid', gap: '0.5rem' }}>
+              <div style={{ fontSize: '0.8rem', fontWeight: 700 }}>Master Search</div>
               <div style={{ display: 'flex', gap: '0.45rem' }}>
-                <input placeholder="Search company" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} />
+                <input
+                  placeholder="Search company"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && runSearch()}
+                />
                 <button className="btn" onClick={runSearch}>Search</button>
               </div>
               {searchResult ? (
@@ -472,11 +521,12 @@ export default function AnalysisView() {
                   {(searchResult.partial || []).slice(0, 4).map((r) => <div key={r.id} style={{ borderBottom: '1px dashed var(--line)', paddingBottom: '0.35rem' }}>{r.name_raw} · {r.domain_normalized || 'no-domain'}</div>)}
                 </div>
               ) : null}
-            </section>
+            </div>
 
-            <section className="panel" style={{ display: 'grid', gap: '0.55rem' }}>
+            {/* Enrichment */}
+            <div className="panel" style={{ margin: 0, padding: '0.85rem 1rem', display: 'grid', gap: '0.55rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h2 style={{ margin: 0, fontSize: '0.95rem' }}>Enrichment</h2>
+                <div style={{ fontSize: '0.8rem', fontWeight: 700 }}>Enrichment</div>
                 <button className="btn" onClick={() => setEnrichOpen((v) => !v)}>{enrichOpen ? 'Collapse' : 'Expand'}</button>
               </div>
               {enrichOpen ? (
@@ -492,14 +542,29 @@ export default function AnalysisView() {
                     <CrunchbaseDiscover withInput companyName={enrichForm.enriched_company_name || companyName} buttonLabel="Open on Crunchbase" />
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.38rem' }}>
-                    {LINKEDIN_KEYWORDS.map((k) => (
-                      <button key={k} className="btn" onClick={() => window.open(`https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(`${enrichForm.enriched_company_name || companyName} ${k}`)}`, '_blank')}>{k}</button>
-                    ))}
+                    {LINKEDIN_PEOPLE_BUTTONS.map(({ label, keyword }) => {
+                      const url = linkedinPeopleUrl(enrichForm.enriched_company_linkedin || companyLinkedin, keyword)
+                      return (
+                        <button key={label} className="btn" disabled={!url} onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}>{label}</button>
+                      )
+                    })}
+                    <button
+                      className="btn"
+                      disabled={!linkedinCompanySlug(enrichForm.enriched_company_linkedin || companyLinkedin)}
+                      onClick={() => {
+                        const li = enrichForm.enriched_company_linkedin || companyLinkedin
+                        LINKEDIN_PEOPLE_BUTTONS.forEach(({ keyword }) => {
+                          const url = linkedinPeopleUrl(li, keyword)
+                          if (url) window.open(url, '_blank', 'noopener,noreferrer')
+                        })
+                      }}
+                    >Open all</button>
                   </div>
                 </>
               ) : <div style={{ fontSize: '0.8rem', color: 'var(--ink-soft)' }}>Opens on YES label.</div>}
-            </section>
-          </aside>
+            </div>
+
+          </div>
         </section>
       )}
     </>

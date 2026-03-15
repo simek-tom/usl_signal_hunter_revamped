@@ -90,6 +90,30 @@ class PersonData:
 
 
 # ---------------------------------------------------------------------------
+# Default LP contact_data key fallbacks per internal field
+# ---------------------------------------------------------------------------
+
+# Each list is tried in order until a non-empty value is found.
+_LP_API_DEFAULTS: dict[str, list[str]] = {
+    "company_name":           ["company_name"],
+    "company_website":        ["company_website"],
+    "company_linkedin":       ["company_linkedin"],
+    "company_country":        ["country", "linkedin_company_country"],
+    "company_employee_count": ["company_employees", "linkedin_company_size"],
+    "first_name":             ["first_name"],
+    "last_name":              ["last_name"],
+    "email":                  ["email"],
+    "contact_linkedin":       ["linkedin"],
+    "position":               ["position"],
+    "content_text":           ["post_content", "linkedin_post", "content_text"],
+    "content_url":            ["linkedin_post_url", "post_url", "content_url"],
+    "content_summary":        ["summary", "content_summary", "post_summary"],
+    "ai_classifier":          ["ai_classifier", "ai_clasifier"],
+    "source_robot":           ["source_robot"],
+}
+
+
+# ---------------------------------------------------------------------------
 # Mapping from raw LP API item → PersonData
 # ---------------------------------------------------------------------------
 
@@ -102,44 +126,42 @@ def _cd(item: dict, key: str) -> str:
     return str(node or "").strip()
 
 
-def from_lp_api(item: dict) -> PersonData:
+def from_lp_api(item: dict, api_field_map: dict | None = None) -> PersonData:
+    """
+    Convert a raw LP API item to PersonData.
+
+    api_field_map (from pipeline config's api_field_map) maps:
+        internal_field_name → lp_contact_data_key
+
+    When a field is in api_field_map, that specific LP key is used directly
+    instead of the default multi-key fallback chain.
+    """
+    def get(internal_field: str) -> str:
+        if api_field_map and internal_field in api_field_map:
+            return _cd(item, api_field_map[internal_field])
+        for key in _LP_API_DEFAULTS.get(internal_field, []):
+            val = _cd(item, key)
+            if val:
+                return val
+        return ""
+
     return PersonData(
-        company_name=_cd(item, "company_name"),
-        company_website=_cd(item, "company_website"),
-        company_linkedin=clean_linkedin_url(_cd(item, "company_linkedin")),
-        company_country=(
-            _cd(item, "country")
-            or _cd(item, "linkedin_company_country")
-        ),
-        company_employee_count=(
-            _cd(item, "company_employees") or _cd(item, "linkedin_company_size")
-        ),
-        first_name=_cd(item, "first_name"),
-        last_name=_cd(item, "last_name"),
-        email=_cd(item, "email"),
-        contact_linkedin=clean_linkedin_url(_cd(item, "linkedin")),
-        position=_cd(item, "position"),
+        company_name=get("company_name"),
+        company_website=get("company_website"),
+        company_linkedin=clean_linkedin_url(get("company_linkedin")),
+        company_country=get("company_country"),
+        company_employee_count=get("company_employee_count"),
+        first_name=get("first_name"),
+        last_name=get("last_name"),
+        email=get("email"),
+        contact_linkedin=clean_linkedin_url(get("contact_linkedin")),
+        position=get("position"),
         external_id=str(item.get("id") or ""),
-        content_text=(
-            _cd(item, "post_content")
-            or _cd(item, "linkedin_post")
-            or _cd(item, "content_text")
-        ),
-        content_url=(
-            _cd(item, "linkedin_post_url")
-            or _cd(item, "post_url")
-            or _cd(item, "content_url")
-        ),
-        content_summary=(
-            _cd(item, "summary")
-            or _cd(item, "content_summary")
-            or _cd(item, "post_summary")
-        ),
-        ai_classifier=(
-            _cd(item, "ai_classifier")
-            or _cd(item, "ai_clasifier")   # LP typo variant
-        ),
-        source_robot=_cd(item, "source_robot"),
+        content_text=get("content_text"),
+        content_url=get("content_url"),
+        content_summary=get("content_summary"),
+        ai_classifier=get("ai_classifier"),
+        source_robot=get("source_robot"),
         lp_left_out=bool(item.get("is_left_out")),
         lp_replied=bool(item.get("has_reply_to_linkedin")),
         lp_project_id=item.get("_lp_project_id"),
@@ -176,14 +198,19 @@ _CSV_MAP: dict[str, str] = {
 }
 
 
-def _csv_key(header: str) -> Optional[str]:
-    return _CSV_MAP.get(header.strip().lower().replace("_", " "))
+def _csv_key(header: str, extra_map: dict[str, str] | None = None) -> Optional[str]:
+    normalized = header.strip().lower().replace("_", " ")
+    if extra_map:
+        for k, v in extra_map.items():
+            if k.strip().lower() == normalized:
+                return v
+    return _CSV_MAP.get(normalized)
 
 
-def from_csv_row(row: dict) -> PersonData:
+def from_csv_row(row: dict, extra_map: dict[str, str] | None = None) -> PersonData:
     mapped: dict[str, str] = {}
     for header, value in row.items():
-        key = _csv_key(header)
+        key = _csv_key(header, extra_map)
         if key:
             mapped[key] = (value or "").strip()
 
@@ -206,10 +233,10 @@ def from_csv_row(row: dict) -> PersonData:
     )
 
 
-def parse_csv(raw_bytes: bytes) -> list[PersonData]:
-    text = raw_bytes.decode("utf-8-sig")  # strip BOM if present
+def parse_csv(raw_bytes: bytes, column_map: dict[str, str] | None = None) -> list[PersonData]:
+    text = raw_bytes.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text), delimiter=";")
-    return [from_csv_row(row) for row in reader]
+    return [from_csv_row(row, extra_map=column_map) for row in reader]
 
 
 # ---------------------------------------------------------------------------
@@ -222,16 +249,6 @@ def _chunks(lst: list, size: int):
 
 
 def _fp_or_filter(fps: list[str]) -> str:
-    """
-    Build a PostgREST OR filter string for fingerprint equality lookups.
-
-    PostgREST in.() uses comma as list delimiter so fingerprints that
-    contain commas (e.g. 'acme, inc.|acme.com') silently fail to match.
-    Using or=() with per-value double-quoting avoids that entirely.
-
-    Backslashes and double-quotes inside a value are escaped per PostgREST
-    quoting rules; all values are quoted so no edge cases are missed.
-    """
     parts = []
     for fp in fps:
         escaped = fp.replace("\\", "\\\\").replace('"', '\\"')
@@ -240,11 +257,6 @@ def _fp_or_filter(fps: list[str]) -> str:
 
 
 async def process_lp_import(db, people: list[PersonData], pipeline_key: str, batch_id: str) -> int:
-    """
-    Write LP records to staging_leadspicker.
-    Dedup is handled by UNIQUE(dedup_key) + ON CONFLICT DO NOTHING.
-    Returns count of newly inserted rows.
-    """
     if not people:
         return 0
 
@@ -295,7 +307,6 @@ async def process_lp_import(db, people: list[PersonData], pipeline_key: str, bat
 
 
 def _normalize_url_for_dedup(url: str) -> str | None:
-    """Normalize URL for dedup key. Same logic as old dedup._normalize_url."""
     if not url:
         return None
     import re

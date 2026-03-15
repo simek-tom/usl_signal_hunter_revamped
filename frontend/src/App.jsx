@@ -28,8 +28,8 @@ function App() {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/pipeline/:type" element={<PipelineDashboard />} />
           <Route path="/pipeline/new" element={<PipelineDashboard />} />
-          <Route path="/analyze/:pipelineKey/:batchId" element={<AnalysisView />} />
-          <Route path="/draft/:batchId" element={<DraftingView />} />
+          <Route path="/analyze/:pipelineKey" element={<AnalysisView />} />
+          <Route path="/draft/:pipelineKey" element={<DraftingView />} />
         </Routes>
       </main>
     </div>

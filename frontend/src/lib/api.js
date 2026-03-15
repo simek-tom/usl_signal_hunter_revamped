@@ -153,18 +153,20 @@ export const api = {
       body: { entry_ids: entryIds },
     }),
 
-  pushLeadspicker: ({ entryIds, projectId }) =>
+  pushLeadspicker: ({ entryIds, projectId, pipelineKey }) =>
     request('/push/leadspicker', {
       method: 'POST',
-      body: { entry_ids: entryIds, project_id: projectId },
+      body: { entry_ids: entryIds, project_id: projectId, pipeline_key: pipelineKey || null },
     }),
 
-  pushAirtable: ({ entryIds, tableName }) =>
+  pushAirtable: ({ entryIds, tableName, pipelineKey }) =>
     request('/push/airtable', {
       method: 'POST',
-      body: tableName
-        ? { entry_ids: entryIds, table_name: tableName }
-        : { entry_ids: entryIds },
+      body: {
+        entry_ids: entryIds,
+        ...(tableName ? { table_name: tableName } : {}),
+        ...(pipelineKey ? { pipeline_key: pipelineKey } : {}),
+      },
     }),
 
   getPushLog: (batchId) => request(`/push/log/${batchId}`),
@@ -187,12 +189,21 @@ export const api = {
   createPipelineConfig: (body) => request('/pipeline-configs', { method: 'POST', body }),
   updatePipelineConfig: (id, body) => request(`/pipeline-configs/${id}`, { method: 'PUT', body }),
   deletePipelineConfig: (id) => request(`/pipeline-configs/${id}`, { method: 'DELETE' }),
+  getLpProjectPreview: (projectId) => request(`/lp-projects/${projectId}/preview`),
+
+  // Pipeline-level (reservoir architecture)
+  getPipelineStats: (pipelineKey) => request(`/pipeline/${pipelineKey}/stats`),
+  getPipelineDraftEntries: (pipelineKey) => request(`/pipeline/${pipelineKey}/draft-entries-full`),
+  startPipelineDrafting: (pipelineKey) =>
+    request(`/pipeline/${pipelineKey}/start-drafting`, { method: 'POST' }),
+  finishPipelineDrafting: (pipelineKey) =>
+    request(`/pipeline/${pipelineKey}/finish-drafting`, { method: 'POST' }),
+  labelAiClassifierNo: (pipelineKey) =>
+    request(`/pipeline/${pipelineKey}/label-ai-classifier-no`, { method: 'POST' }),
 
   // Staging
-  getStagingEntries: (pipelineKey, batchId) => {
-    const params = batchId ? `?batch_id=${batchId}` : ''
-    return request(`/staging/${pipelineKey}/entries${params}`)
-  },
+  getStagingEntries: (pipelineKey, { unlabeledOnly = false } = {}) =>
+    request(`/staging/${pipelineKey}/entries${unlabeledOnly ? '?unlabeled_only=true' : ''}`),
   labelStagingEntry: ({ pipelineKey, stagingId, label, learningData }) =>
     request(`/staging/${pipelineKey}/${stagingId}/label`, {
       method: 'POST',
@@ -208,10 +219,10 @@ export const api = {
       method: 'POST',
       body: payload,
     }),
-  finishAnalysis: ({ pipelineKey, batchId }) =>
+  finishAnalysis: (pipelineKey) =>
     request(`/staging/${pipelineKey}/finish-analysis`, {
       method: 'POST',
-      body: { batch_id: batchId },
+      body: {},
     }),
   checkContacted: (payload) =>
     request('/staging/_contacted-check', {

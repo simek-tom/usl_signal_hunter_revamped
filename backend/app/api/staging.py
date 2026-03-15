@@ -43,12 +43,15 @@ async def _get_staging_table(db: AsyncClient, pipeline_key: str) -> str:
 async def list_staging_entries(
     pipeline_key: str,
     batch_id: Optional[str] = Query(None),
+    unlabeled_only: bool = Query(False),
     db: AsyncClient = Depends(get_supabase),
 ):
     table = await _get_staging_table(db, pipeline_key)
     query = db.table(table).select("*").eq("pipeline_key", pipeline_key)
     if batch_id:
         query = query.eq("batch_id", batch_id)
+    if unlabeled_only:
+        query = query.is_("label", "null")
     query = query.order("ai_pre_score", desc=True, nullsfirst=False)
 
     entries = []

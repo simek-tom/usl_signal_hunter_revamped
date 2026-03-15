@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../lib/api'
+import { highlightText } from '../lib/keywords'
 import MessageBox from '../components/MessageBox'
 import ProgressBar from '../components/ProgressBar'
 import CrunchbaseDiscover from '../components/CrunchbaseDiscover'
@@ -23,11 +24,12 @@ function isLinkedinLeadspickerPipeline(pipelineType) {
 }
 
 export default function DraftingView() {
-  const { batchId } = useParams()
+  const { pipelineKey } = useParams()
 
   const [loading, setLoading] = useState(true)
   const [entries, setEntries] = useState([])
   const [currentIndex, setCurrentIndex] = useState(0)
+  const [pipelineType, setPipelineType] = useState('')
   const [draftText, setDraftText] = useState('')
   const [lastSavedText, setLastSavedText] = useState('')
 
@@ -40,6 +42,7 @@ export default function DraftingView() {
   const [chatMessages, setChatMessages] = useState([])
   const [chatInput, setChatInput] = useState('')
   const [chatBusy, setChatBusy] = useState(false)
+  const [isContacted, setIsContacted] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -47,12 +50,13 @@ export default function DraftingView() {
     async function load() {
       setLoading(true)
       try {
-        const data = await api.getDraftEntries(batchId)
+        const data = await api.getPipelineDraftEntries(pipelineKey)
         if (!alive) {
           return
         }
         setEntries(data)
         setCurrentIndex(0)
+        if (data.length > 0) setPipelineType(data[0].pipeline_type || '')
       } catch (err) {
         if (alive) {
           setMessage({ kind: 'error', text: String(err.message || err) })
@@ -68,7 +72,7 @@ export default function DraftingView() {
     return () => {
       alive = false
     }
-  }, [batchId])
+  }, [pipelineKey])
 
   const current = entries[currentIndex] || null
   const currentMessage = current?.message || null
@@ -93,11 +97,27 @@ export default function DraftingView() {
     setChatInput('')
   }, [current?.id, current?.ai_chat_state])
 
+  useEffect(() => {
+    if (!current) {
+      setIsContacted(false)
+      return
+    }
+    const co = current?.signals?.companies || {}
+    api.checkContacted({
+      company_name: co.name_raw || null,
+      company_website: co.website || co.domain_normalized || null,
+      company_linkedin: co.linkedin_url || null,
+    }).then((res) => setIsContacted(res?.is_contacted || false)).catch(() => setIsContacted(false))
+  }, [current?.id])
+
   const saveCurrentDraft = useCallback(async () => {
     if (!currentMessage) {
       return true
     }
     if (draftText === lastSavedText) {
+      return true
+    }
+    if (!draftText.trim()) {
       return true
     }
 
@@ -144,7 +164,7 @@ export default function DraftingView() {
   }, [])
 
   const navigate = useCallback(async (delta) => {
-    const target = Math.max(0, Math.min(entries.length - 1, currentIndex + delta))
+    const target = Math.max(0, Math.min(entries.length, currentIndex + delta))
     if (target === currentIndex) {
       return
     }
@@ -223,7 +243,7 @@ export default function DraftingView() {
     setBusy(true)
     try {
       await saveCurrentDraft()
-      const res = await api.finishDrafting(batchId)
+      const res = await api.finishPipelineDrafting(pipelineKey)
       setMessage({
         kind: 'info',
         text: `Finish Drafting done. Finalized ${res.finalized}/${res.total_drafted} (skipped ${res.skipped_empty}).`,
@@ -313,14 +333,26 @@ export default function DraftingView() {
     return <MessageBox kind="info" text="Loading drafting entries..." />
   }
 
+  if (!current && entries.length === 0) {
+    return (
+      <section className="panel" style={{ display: 'grid', gap: '0.6rem' }}>
+        <h1 style={{ margin: 0 }}>Drafting · {pipelineKey}</h1>
+        <MessageBox kind="warn" text="No relevant entries for drafting." />
+        <Link className="btn" to={`/pipeline/${pipelineKey}`}>Back to Pipeline</Link>
+      </section>
+    )
+  }
+
   if (!current) {
     return (
       <section className="panel" style={{ display: 'grid', gap: '0.6rem' }}>
-        <h1 style={{ margin: 0 }}>Drafting</h1>
-        <MessageBox kind="warn" text="No relevant entries for drafting." />
-        <Link className="btn" to={`/analyze/${batchId}`}>
-          Back to Analysis
-        </Link>
+        <h1 style={{ margin: 0 }}>Drafting · {pipelineKey}</h1>
+        <MessageBox kind="info" text="You've reached the end — all entries reviewed." />
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button className="btn" onClick={() => setCurrentIndex(entries.length - 1)}>← Back to last entry</button>
+          <button className="btn warn" disabled={busy} onClick={finishDrafting}>Finish Drafting</button>
+          <Link className="btn" to={`/pipeline/${pipelineKey}`}>Back to Pipeline</Link>
+        </div>
       </section>
     )
   }
@@ -330,18 +362,18 @@ export default function DraftingView() {
       <section className="panel" style={{ display: 'grid', gap: '0.65rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: '1.25rem' }}>Drafting · Batch {batchId.slice(0, 8)}...</h1>
+            <h1 style={{ margin: 0, fontSize: '1.25rem' }}>Drafting · {pipelineKey}</h1>
             <div style={{ fontSize: '0.76rem', color: 'var(--ink-soft)' }}>
               Auto-save happens on navigation writes only.
             </div>
           </div>
 
           <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-            <Link className="btn" to={`/analyze/${current?.pipeline_type || 'lp_general'}/${batchId}`}>
-              Back to Analysis
+            <Link className="btn" to={`/pipeline/${pipelineKey}`}>
+              Back to Pipeline
             </Link>
             <button className="btn" onClick={() => setEditTableOpen((v) => !v)}>
-              {editTableOpen ? 'Close Edit Batch' : 'Edit Batch'}
+              {editTableOpen ? 'Close Edit Entries' : 'Edit Entries'}
             </button>
             <button className="btn warn" disabled={busy} onClick={finishDrafting}>
               Finish Drafting
@@ -352,8 +384,14 @@ export default function DraftingView() {
         <MessageBox kind={message.kind} text={message.text} />
 
         <div style={{ display: 'grid', gap: '0.4rem' }}>
-          <div style={{ fontSize: '0.78rem', color: 'var(--ink-soft)' }}>
-            Entry {currentIndex + 1}/{entries.length} · Drafted {draftingProgress.withDraft}/{draftingProgress.total}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+            <div style={{ fontSize: '0.78rem', color: 'var(--ink-soft)' }}>
+              Entry {currentIndex + 1}/{entries.length} · Drafted {draftingProgress.withDraft}/{draftingProgress.total}
+            </div>
+            <div style={{ display: 'flex', gap: '0.38rem' }}>
+              <button className="btn" disabled={busy || currentIndex === 0} onClick={() => navigate(-1)}>← Prev</button>
+              <button className="btn primary" disabled={busy} onClick={() => navigate(1)}>Next →</button>
+            </div>
           </div>
           <ProgressBar value={draftingProgress.withDraft} total={Math.max(draftingProgress.total, 1)} />
         </div>
@@ -362,7 +400,7 @@ export default function DraftingView() {
       {editTableOpen ? (
         <section className="panel" style={{ display: 'grid', gap: '0.55rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <strong style={{ fontSize: '0.92rem' }}>Edit Batch</strong>
+            <strong style={{ fontSize: '0.92rem' }}>Edit Entries</strong>
             <button className="btn danger" disabled={busy || removeIds.length === 0} onClick={applyBatchRemoval}>
               Remove Selected ({removeIds.length})
             </button>
@@ -403,7 +441,14 @@ export default function DraftingView() {
 
       <section className="grid-2" style={{ alignItems: 'start' }}>
         <article className="panel" style={{ display: 'grid', gap: '0.65rem' }}>
-          <h2 style={{ margin: 0, fontSize: '1rem' }}>Context</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <h2 style={{ margin: 0, fontSize: '1rem' }}>Context</h2>
+            {isContacted ? (
+              <span className="badge" style={{ background: '#e53e3e', color: '#fff', fontWeight: 700 }}>
+                ALREADY CONTACTED
+              </span>
+            ) : null}
+          </div>
 
           <div style={{ fontSize: '0.84rem', display: 'grid', gap: '0.3rem' }}>
             <div>
@@ -469,7 +514,11 @@ export default function DraftingView() {
 
           <div className="panel" style={{ margin: 0, padding: '0.7rem', background: '#fff' }}>
             <div style={{ fontSize: '0.75rem', color: 'var(--ink-soft)' }}>Post excerpt</div>
-            <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.82rem' }}>{currentSignal.content_text || 'No text'}</div>
+            <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.82rem', maxHeight: 320, overflowY: 'auto' }}>
+              {highlightText(currentSignal.content_text || '').map((part, idx) =>
+                part.hit ? <mark className="marked-hit" key={idx}>{part.value}</mark> : <span key={idx}>{part.value}</span>
+              )}
+            </div>
           </div>
         </article>
 
@@ -490,7 +539,7 @@ export default function DraftingView() {
             <button className="btn" disabled={busy || currentIndex === 0} onClick={() => navigate(-1)}>
               Back (auto-save)
             </button>
-            <button className="btn primary" disabled={busy || currentIndex >= entries.length - 1} onClick={() => navigate(1)}>
+            <button className="btn primary" disabled={busy} onClick={() => navigate(1)}>
               Next (auto-save)
             </button>
           </div>

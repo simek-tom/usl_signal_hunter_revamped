@@ -191,7 +191,24 @@ async def import_from_lp_api(
     if not raw_items:
         raise HTTPException(status_code=422, detail="No people returned from LP projects")
 
-    people = [from_lp_api(item) for item in raw_items]
+    # Load api_field_map from pipeline config
+    api_field_map = None
+    try:
+        cfg_res = (
+            await db.table("pipeline_configs")
+            .select("default_import_params")
+            .eq("pipeline_key", body.pipeline_type.value)
+            .eq("is_active", True)
+            .limit(1)
+            .execute()
+        )
+        if cfg_res.data:
+            params = cfg_res.data[0].get("default_import_params") or {}
+            api_field_map = params.get("api_field_map") or None
+    except Exception:
+        pass  # optional; proceed without it
+
+    people = [from_lp_api(item, api_field_map=api_field_map) for item in raw_items]
 
     return await _run_import(
         db,
@@ -215,8 +232,26 @@ async def import_from_csv(
         raise HTTPException(status_code=422, detail="File must be a .csv")
 
     raw_bytes = await file.read()
+
+    # Load per-pipeline import column map from pipeline config
+    column_map = None
     try:
-        people = parse_lp_csv(raw_bytes)
+        cfg_res = (
+            await db.table("pipeline_configs")
+            .select("default_import_params")
+            .eq("pipeline_key", pipeline_type.value)
+            .eq("is_active", True)
+            .limit(1)
+            .execute()
+        )
+        if cfg_res.data:
+            params = cfg_res.data[0].get("default_import_params") or {}
+            column_map = params.get("import_column_map") or None
+    except Exception:
+        pass  # mapping is optional; proceed without it
+
+    try:
+        people = parse_lp_csv(raw_bytes, column_map=column_map)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"CSV parse error: {exc}")
 

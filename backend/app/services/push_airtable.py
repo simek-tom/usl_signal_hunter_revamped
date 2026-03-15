@@ -59,11 +59,35 @@ def _best_message_text(msgs: list[dict]) -> str:
     return (msg.get("final_text") or msg.get("draft_text") or "").strip()
 
 
-def _build_airtable_fields(entry: dict) -> dict:
+def _build_airtable_fields(entry: dict, push_map: Optional[dict] = None) -> dict:
     sig = entry.get("signals") or {}
     co = sig.get("companies") or {}
     ct = entry.get("contacts") or {}
     msgs = entry.get("messages") or []
+
+    if push_map:
+        # Custom mapping: { "Airtable Column Name": "internal_field" }
+        _field_values = {
+            "content_url": sig.get("content_url") or "",
+            "content_text": sig.get("content_text") or "",
+            "content_summary": sig.get("content_summary") or "",
+            "ai_classifier": str(sig.get("ai_classifier") or ""),
+            "first_name": ct.get("first_name") or "",
+            "last_name": ct.get("last_name") or "",
+            "email": ct.get("email") or "",
+            "contact_linkedin": ct.get("linkedin_url") or "",
+            "position": ct.get("relation_to_company") or "",
+            "company_name": co.get("name_raw") or "",
+            "company_website": co.get("website") or co.get("domain_normalized") or "",
+            "company_linkedin": co.get("linkedin_url") or "",
+            "country": co.get("country") or "",
+            "message": _best_message_text(msgs),
+        }
+        return {
+            airtable_col: _field_values[internal]
+            for airtable_col, internal in push_map.items()
+            if internal in _field_values and _field_values[internal]
+        }
 
     return {
         "First Name": ct.get("first_name") or "",
@@ -249,6 +273,7 @@ async def create_lp_airtable_records(
     db: AsyncClient,
     entry_ids: list[str],
     table_name: str,
+    push_map: Optional[dict] = None,
 ) -> dict:
     """
     Create Airtable records for the given entry IDs.
@@ -264,7 +289,7 @@ async def create_lp_airtable_records(
     failed = 0
 
     for chunk in _chunks(ordered, 10):
-        fields_list = [_build_airtable_fields(e) for e in chunk]
+        fields_list = [_build_airtable_fields(e, push_map=push_map) for e in chunk]
         chunk_ids = [e["id"] for e in chunk]
         push_status = "success"
         response_data: Optional[dict] = None
@@ -398,6 +423,7 @@ async def push_entries_to_airtable(
     db: AsyncClient,
     entry_ids: list[str],
     table_name: str,
+    push_map: Optional[dict] = None,
 ) -> dict:
     """
     Unified Airtable push dispatcher by pipeline_type.
@@ -422,4 +448,4 @@ async def push_entries_to_airtable(
     pipeline_type = next(iter(types), "")
     if pipeline_type == "crunchbase":
         return await update_crunchbase_airtable_records(db, entry_ids, table_name)
-    return await create_lp_airtable_records(db, entry_ids, table_name)
+    return await create_lp_airtable_records(db, entry_ids, table_name, push_map=push_map)

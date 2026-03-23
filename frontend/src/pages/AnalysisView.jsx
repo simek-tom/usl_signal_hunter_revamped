@@ -5,6 +5,7 @@ import { highlightText } from '../lib/keywords'
 import MessageBox from '../components/MessageBox'
 import ProgressBar from '../components/ProgressBar'
 import CrunchbaseDiscover, { crunchbaseOpenUrl, crunchbaseTextSearchUrl } from '../components/CrunchbaseDiscover'
+import BlacklistBadge from '../components/BlacklistBadge'
 
 const LINKEDIN_PEOPLE_BUTTONS = [
   { label: 'Partnership', keyword: 'partnership' },
@@ -70,12 +71,35 @@ export default function AnalysisView() {
 
   const [message, setMessage] = useState({ kind: 'info', text: '' })
   const [busy, setBusy] = useState(false)
-  const [contactedStatus, setContactedStatus] = useState({ is_contacted: false, matches: [] })
+  // Chrome extension bridge: receive enrichment data via postMessage
+  useEffect(() => {
+    function onHunterMessage(event) {
+      if (event.data?.type !== 'HUNTER_FILL_ENRICHMENT') return
+      const p = event.data.payload || {}
+      const FIELDS = [
+        'enriched_contact_name', 'enriched_contact_linkedin', 'enriched_contact_position',
+        'enriched_company_name', 'enriched_company_website', 'enriched_company_linkedin',
+      ]
+      setEnrichForm((prev) => {
+        const next = { ...prev }
+        for (const f of FIELDS) {
+          if (p[f]) next[f] = p[f]
+        }
+        return next
+      })
+      setEnrichOpen(true)
+      setMessage({ kind: 'info', text: `Hunter: ${p._mode === 'company' ? 'company' : 'person'} data received.` })
+    }
+    window.addEventListener('message', onHunterMessage)
+    return () => window.removeEventListener('message', onHunterMessage)
+  }, [])
 
   const aiFilterEnabled = useMemo(() => {
     const raw = String(searchParams.get('ai_filter') || '').trim().toLowerCase()
     return raw === 'yes' || raw === 'true' || raw === '1'
   }, [searchParams])
+
+  const labelFilter = useMemo(() => searchParams.get('label') || null, [searchParams])
 
   useEffect(() => {
     let alive = true
@@ -83,7 +107,10 @@ export default function AnalysisView() {
       setLoading(true)
       setMessage({ kind: 'info', text: '' })
       try {
-        const data = await api.getStagingEntries(pipelineKey, { unlabeledOnly: true })
+        const opts = labelFilter
+          ? { label: labelFilter }
+          : { unlabeledOnly: true }
+        const data = await api.getStagingEntries(pipelineKey, opts)
         if (!alive) return
         const filtered = aiFilterEnabled
           ? data.filter((row) => String(row?.ai_classifier || '').trim().toLowerCase() !== 'no')
@@ -101,7 +128,7 @@ export default function AnalysisView() {
     }
     load()
     return () => { alive = false }
-  }, [pipelineKey, aiFilterEnabled])
+  }, [pipelineKey, aiFilterEnabled, labelFilter])
 
   const current = entries[currentIndex] || null
 
@@ -137,21 +164,6 @@ export default function AnalysisView() {
   // News-specific
   const headline = current?.content_title || 'Untitled'
   const articleAuthor = current?.article_author || ''
-
-  // Check contacted when entry changes
-  useEffect(() => {
-    if (!current) return
-    const name = companyName
-    const website = companyWebsite
-    const linkedin = companyLinkedin
-    if (!name && !website && !linkedin) {
-      setContactedStatus({ is_contacted: false, matches: [] })
-      return
-    }
-    api.checkContacted({ company_name: name, company_website: website, company_linkedin: linkedin })
-      .then(setContactedStatus)
-      .catch(() => setContactedStatus({ is_contacted: false, matches: [] }))
-  }, [currentIndex, companyName, companyWebsite, companyLinkedin])
 
   // Sync forms when entry changes
   useEffect(() => {
@@ -330,10 +342,10 @@ export default function AnalysisView() {
                 <div style={{ fontSize: '0.8rem', color: 'var(--ink-soft)' }}>
                   {companyWebsite ? <a href={companyWebsite} target="_blank" rel="noreferrer">{companyWebsite}</a> : 'No website'}
                 </div>
+                <BlacklistBadge company_name={companyName} company_linkedin={companyLinkedin} company_website={companyWebsite} />
               </div>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              {contactedStatus.is_contacted ? <span className="badge amber">ALREADY CONTACTED</span> : null}
               <span className="badge gray">CB status: {cbStatus}</span>
               <span className={`badge ${cbWorkflowStatus === 'pushed-ready' ? 'green' : 'amber'}`}>Entry: {cbWorkflowStatus}</span>
               {current.label ? <span className="badge green">Label {current.label.toUpperCase()}</span> : null}
@@ -443,9 +455,13 @@ export default function AnalysisView() {
                     ? <a href={contactLinkedin} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline', color: 'inherit' }}>{isNews ? articleAuthor || 'Unknown author' : contactName || 'Unknown'}</a>
                     : (isNews ? articleAuthor || 'Unknown author' : contactName || 'Unknown')}
                 </span>
-                {contactedStatus.is_contacted && <span className="badge amber">ALREADY CONTACTED</span>}
                 {current.label && <span className="badge green">Label {current.label.toUpperCase()}</span>}
                 {aiClassifier && <span className={`badge ${aiClassifierLower === 'yes' ? 'green' : aiClassifierLower === 'no' ? 'red' : 'gray'}`}>AI: {aiClassifier}</span>}
+                <BlacklistBadge
+                  company_name={enrichForm.enriched_company_name || companyName}
+                  company_linkedin={enrichForm.enriched_company_linkedin || companyLinkedin}
+                  company_website={enrichForm.enriched_company_website || companyWebsite}
+                />
               </div>
               {!isNews && (
                 <div style={{ fontSize: '0.84rem' }}>
@@ -531,12 +547,19 @@ export default function AnalysisView() {
               </div>
               {enrichOpen ? (
                 <>
-                  <input value={enrichForm.enriched_contact_name} placeholder="Full name" onChange={(e) => setEnrichForm((f) => ({ ...f, enriched_contact_name: e.target.value }))} />
-                  <input value={enrichForm.enriched_contact_linkedin} placeholder="LinkedIn URL" onChange={(e) => setEnrichForm((f) => ({ ...f, enriched_contact_linkedin: e.target.value }))} />
-                  <input value={enrichForm.enriched_contact_position} placeholder="Position" onChange={(e) => setEnrichForm((f) => ({ ...f, enriched_contact_position: e.target.value }))} />
-                  <input value={enrichForm.enriched_company_name} placeholder="Company name" onChange={(e) => setEnrichForm((f) => ({ ...f, enriched_company_name: e.target.value }))} />
-                  <input value={enrichForm.enriched_company_website} placeholder="Company website" onChange={(e) => setEnrichForm((f) => ({ ...f, enriched_company_website: e.target.value }))} />
-                  <input value={enrichForm.enriched_company_linkedin} placeholder="Company LinkedIn" onChange={(e) => setEnrichForm((f) => ({ ...f, enriched_company_linkedin: e.target.value }))} />
+                  {[
+                    ['Full name',        'enriched_contact_name'],
+                    ['LinkedIn URL',     'enriched_contact_linkedin'],
+                    ['Position',         'enriched_contact_position'],
+                    ['Company name',     'enriched_company_name'],
+                    ['Company website',  'enriched_company_website'],
+                    ['Company LinkedIn', 'enriched_company_linkedin'],
+                  ].map(([lbl, field]) => (
+                    <label key={field} style={{ display: 'grid', gap: '0.2rem', fontSize: '0.75rem', color: 'var(--ink-soft)' }}>
+                      {lbl}
+                      <input value={enrichForm[field]} onChange={(e) => setEnrichForm((f) => ({ ...f, [field]: e.target.value }))} />
+                    </label>
+                  ))}
                   <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
                     <button className="btn primary" disabled={busy} onClick={saveEnrichment}>Save Enrichment</button>
                     <CrunchbaseDiscover withInput companyName={enrichForm.enriched_company_name || companyName} buttonLabel="Open on Crunchbase" />

@@ -34,17 +34,13 @@ _PUSH_SELECT = (
 )
 
 
-async def _get_push_row_limit(db: AsyncClient) -> int:
-    res = (
-        await db.table("settings")
-        .select("value")
-        .eq("key", "push_row_limit")
-        .execute()
-    )
-    if res.data:
+def _get_push_row_limit() -> int:
+    from app.core.local_settings import get as local_get
+    val = local_get("push_row_limit")
+    if val is not None:
         try:
-            return int(res.data[0]["value"])
-        except (ValueError, TypeError, KeyError):
+            return int(val)
+        except (ValueError, TypeError):
             pass
     return _DEFAULT_PUSH_LIMIT
 
@@ -135,6 +131,7 @@ async def push_to_leadspicker(
     entry_ids: list[str],
     project_id: int,
     push_map: dict | None = None,
+    pipeline_key: str | None = None,
 ) -> dict:
     """
     Push entries to a LeadsPicker project.
@@ -150,7 +147,7 @@ async def push_to_leadspicker(
     if not entry_ids:
         return {"pushed": 0, "failed": 0, "skipped": 0}
 
-    limit = await _get_push_row_limit(db)
+    limit = _get_push_row_limit()
     if len(entry_ids) > limit:
         entry_ids = entry_ids[:limit]
 
@@ -243,17 +240,19 @@ async def push_to_leadspicker(
 
             if push_status == "success":
                 co = sig.get("companies") or {}
-                from app.services.leadspicker_normalize import normalize_domain, make_fingerprint
-                from app.core.utils import normalize_company_name
-                co_name = co.get("name_raw") or ""
-                co_domain = normalize_domain(co.get("website") or co.get("domain_normalized") or "")
-                await db.table("contacted_companies").insert({
-                    "company_name_normalized": normalize_company_name(co_name) if co_name else None,
-                    "domain_normalized": co_domain or None,
-                    "linkedin_url": co.get("linkedin_url") or None,
-                    "fingerprint": make_fingerprint(co_name, co_domain),
-                    "contacted_via": entry.get("pipeline_type"),
-                    "pipeline_entry_id": eid,
-                }).execute()
+                try:
+                    from app.api._helpers import build_blacklist_row
+                    row = build_blacklist_row(
+                        company_name=co.get("name_raw") or "",
+                        company_linkedin=co.get("linkedin_url"),
+                        company_website=co.get("website") or co.get("domain_normalized"),
+                        reason="contacted",
+                        added_by="auto:push_lp",
+                        origin=pipeline_key or entry.get("pipeline_type"),
+                        pipeline_entry_id=eid,
+                    )
+                    await db.table("blacklisted_companies").insert(row).execute()
+                except Exception:
+                    pass  # non-blocking
 
     return {"pushed": pushed, "failed": failed, "skipped": skipped}

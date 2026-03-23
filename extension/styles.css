@@ -1,0 +1,36 @@
+.usl-hunter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  margin: 8px 0;
+  border: none;
+  border-radius: 20px;
+  background: #e8a838;
+  color: #1a1a1a;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  z-index: 9999;
+}
+
+.usl-hunter-btn:hover {
+  background: #d4922e;
+  transform: scale(1.03);
+}
+
+.usl-hunter-btn--sent {
+  background: #48bb78;
+  color: #fff;
+}
+
+.usl-hunter-btn--floating {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  padding: 10px 20px;
+  font-size: 14px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+}

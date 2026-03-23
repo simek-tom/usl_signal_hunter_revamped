@@ -1,15 +1,13 @@
-from fastapi import APIRouter, Depends
-from supabase import AsyncClient
+from fastapi import APIRouter
 
-from app.core.supabase import get_supabase
+from app.core.local_settings import read_all
 
 router = APIRouter()
 
 
 @router.get("/health")
-async def health_check(db: AsyncClient = Depends(get_supabase)):
-    result = await db.table("settings").select("key, value").execute()
+async def health_check():
     return {
         "status": "ok",
-        "settings_count": len(result.data),
+        "settings_count": len(read_all()),
     }

@@ -6,9 +6,8 @@ from fastapi.responses import FileResponse
 
 from app.core.config import settings
 from app.core.runtime_config import load_runtime_env_overrides
-from app.core.supabase import get_supabase
 from app.api import health
-from app.api import settings_api, lp_projects, blacklist, import_lp, batches, entries, search, drafting, push, ai, pipeline_configs, staging, pipeline as pipeline_api
+from app.api import settings_api, lp_projects, blacklist, import_lp, entries, search, drafting, push, ai, pipeline_configs, staging, pipeline as pipeline_api
 
 
 def create_app() -> FastAPI:
@@ -33,7 +32,6 @@ def create_app() -> FastAPI:
     app.include_router(lp_projects.router, prefix="/api")
     app.include_router(blacklist.router, prefix="/api")
     app.include_router(import_lp.router, prefix="/api")
-    app.include_router(batches.router, prefix="/api")
     app.include_router(pipeline_configs.router, prefix="/api")
     app.include_router(staging.router, prefix="/api")
     app.include_router(entries.router, prefix="/api")
@@ -47,8 +45,7 @@ def create_app() -> FastAPI:
     async def startup_load_runtime_overrides():
         # Best-effort: service still works with .env defaults if this fails.
         try:
-            db = await get_supabase()
-            await load_runtime_env_overrides(db)
+            load_runtime_env_overrides()
         except Exception:
             pass
 

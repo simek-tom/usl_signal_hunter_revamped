@@ -1,54 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { usePipelineConfigs } from '../context/PipelineConfigContext'
-import ProgressBar from '../components/ProgressBar'
-import StatusBadge from '../components/StatusBadge'
 import MessageBox from '../components/MessageBox'
-
-function BatchRow({ batch, getLabel }) {
-  const progress = batch.progress || { total: 0, yes: 0, no: 0, cc: 0, unlabeled: 0 }
-  const labeled = progress.yes + progress.no + progress.cc
-
-  return (
-    <div className="panel" style={{ padding: '0.8rem', display: 'grid', gap: '0.5rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center' }}>
-        <div>
-          <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{getLabel(batch.pipeline_type)}</div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--ink-soft)' }}>Batch {batch.id.slice(0, 8)}...</div>
-        </div>
-        <StatusBadge status={batch.status || 'new'} />
-      </div>
-
-      <ProgressBar value={labeled} total={Math.max(progress.total, 1)} />
-
-      <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', fontSize: '0.74rem' }}>
-        <span>YES {progress.yes}</span>
-        <span>NO {progress.no}</span>
-        <span>CC {progress.cc}</span>
-        <span>Unlabeled {progress.unlabeled}</span>
-      </div>
-
-      <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-        <Link className="btn" to={`/analyze/${batch.pipeline_type}/${batch.id}`}>
-          Analyze
-        </Link>
-        {batch.pipeline_type !== 'crunchbase' ? (
-          <Link className="btn warn" to={`/draft/${batch.id}`}>
-            Draft
-          </Link>
-        ) : null}
-        <Link className="btn" to={`/pipeline/${batch.pipeline_type}`}>
-          Pipeline
-        </Link>
-      </div>
-    </div>
-  )
-}
 
 export default function HomeDashboard() {
   const { configs, getLabel } = usePipelineConfigs()
-  const [batches, setBatches] = useState([])
+  const [stats, setStats] = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -58,49 +16,31 @@ export default function HomeDashboard() {
       setLoading(true)
       setError('')
       try {
-        const data = await api.getBatches()
-        if (alive) {
-          setBatches(data)
-        }
+        const results = await Promise.all(
+          configs.map(async (p) => {
+            try {
+              const s = await api.getPipelineStats(p.pipeline_key)
+              return [p.pipeline_key, s]
+            } catch {
+              return [p.pipeline_key, null]
+            }
+          }),
+        )
+        if (alive) setStats(Object.fromEntries(results))
       } catch (err) {
-        if (alive) {
-          setError(String(err.message || err))
-        }
+        if (alive) setError(String(err.message || err))
       } finally {
-        if (alive) {
-          setLoading(false)
-        }
+        if (alive) setLoading(false)
       }
     }
-    load()
-    return () => {
-      alive = false
-    }
-  }, [])
+    if (configs.length > 0) load()
+    else setLoading(false)
+    return () => { alive = false }
+  }, [configs])
 
-  const quickStats = useMemo(() => {
-    const byPipeline = configs.map((p) => {
-      const rel = batches.filter((b) => b.pipeline_type === p.pipeline_key)
-      const entries = rel.reduce((acc, b) => acc + (b.progress?.total || 0), 0)
-      return {
-        key: p.pipeline_key,
-        label: p.label,
-        batches: rel.length,
-        entries,
-      }
-    })
-
-    return {
-      totalBatches: batches.length,
-      totalEntries: batches.reduce((acc, b) => acc + (b.progress?.total || 0), 0),
-      byPipeline,
-    }
-  }, [batches, configs])
-
-  const activeBatches = useMemo(
-    () => batches.filter((b) => (b.progress?.unlabeled || 0) > 0 || (b.progress?.total || 0) > 0).slice(0, 12),
-    [batches],
-  )
+  const totalImported = Object.values(stats).reduce((a, s) => a + (s?.staging?.total || 0), 0)
+  const totalUnlabeled = Object.values(stats).reduce((a, s) => a + (s?.staging?.unlabeled || 0), 0)
+  const totalDrafted = Object.values(stats).reduce((a, s) => a + (s?.entries?.drafted || 0), 0)
 
   return (
     <>
@@ -109,61 +49,55 @@ export default function HomeDashboard() {
           <div>
             <h1 style={{ margin: 0, fontSize: '1.4rem' }}>Dashboard</h1>
             <p style={{ margin: '0.2rem 0 0', color: 'var(--ink-soft)', fontSize: '0.85rem' }}>
-              Pipeline overview, active batches, and quick navigation.
+              Pipeline overview and quick navigation.
             </p>
           </div>
           <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-            <Link className="btn" to="/settings">
-              Open Settings
-            </Link>
-            <button className="btn" onClick={() => location.reload()}>
-              Refresh
-            </button>
+            <Link className="btn" to="/settings">Open Settings</Link>
+            <button className="btn" onClick={() => location.reload()}>Refresh</button>
           </div>
         </div>
 
         <MessageBox kind="error" text={error} />
-        {loading ? <MessageBox kind="info" text="Loading batches..." /> : null}
+        {loading ? <MessageBox kind="info" text="Loading pipeline stats..." /> : null}
 
         <div className="grid-3">
           <div className="panel metric" style={{ margin: 0 }}>
-            <span className="metric-label">Total Batches</span>
-            <span className="metric-value">{quickStats.totalBatches}</span>
+            <span className="metric-label">Total Imported</span>
+            <span className="metric-value">{totalImported}</span>
           </div>
           <div className="panel metric" style={{ margin: 0 }}>
-            <span className="metric-label">Tracked Entries</span>
-            <span className="metric-value">{quickStats.totalEntries}</span>
+            <span className="metric-label">Awaiting Analysis</span>
+            <span className="metric-value">{totalUnlabeled}</span>
           </div>
           <div className="panel metric" style={{ margin: 0 }}>
-            <span className="metric-label">Pipelines Live</span>
-            <span className="metric-value">{quickStats.byPipeline.filter((p) => p.batches > 0).length}</span>
+            <span className="metric-label">Drafted</span>
+            <span className="metric-value">{totalDrafted}</span>
           </div>
         </div>
       </section>
 
       <section className="grid-2">
-        {quickStats.byPipeline.map((p) => (
-          <Link key={p.key} className="panel" to={`/pipeline/${p.key}`} style={{ display: 'grid', gap: '0.4rem' }}>
-            <div style={{ fontWeight: 700 }}>{p.label}</div>
-            <div style={{ color: 'var(--ink-soft)', fontSize: '0.8rem' }}>{p.batches} batches</div>
-            <div style={{ fontSize: '1.15rem', fontWeight: 700 }}>{p.entries} entries</div>
-          </Link>
-        ))}
-      </section>
-
-      <section style={{ display: 'grid', gap: '0.75rem' }}>
-        <h2 style={{ margin: 0, fontSize: '1.05rem' }}>Active Batches</h2>
-        {activeBatches.length === 0 ? (
-          <div className="panel" style={{ color: 'var(--ink-soft)' }}>
-            No batches yet.
-          </div>
-        ) : (
-          <div className="grid-3">
-            {activeBatches.map((batch) => (
-              <BatchRow key={batch.id} batch={batch} getLabel={getLabel} />
-            ))}
-          </div>
-        )}
+        {configs.map((p) => {
+          const s = stats[p.pipeline_key]
+          const staging = s?.staging || {}
+          const entries = s?.entries || {}
+          return (
+            <Link key={p.pipeline_key} className="panel" to={`/pipeline/${p.pipeline_key}`} style={{ display: 'grid', gap: '0.4rem', textDecoration: 'none' }}>
+              <div style={{ fontWeight: 700 }}>{p.label}</div>
+              <div style={{ display: 'flex', gap: '0.8rem', fontSize: '0.8rem', color: 'var(--ink-soft)', flexWrap: 'wrap' }}>
+                <span>{staging.total || 0} imported</span>
+                <span>{staging.unlabeled || 0} unlabeled</span>
+                <span>{staging.yes || 0} yes</span>
+              </div>
+              <div style={{ display: 'flex', gap: '0.8rem', fontSize: '0.8rem', color: 'var(--ink-soft)', flexWrap: 'wrap' }}>
+                <span>{entries.total || 0} entries</span>
+                <span>{entries.drafted || 0} drafted</span>
+                <span>{entries.pushed || 0} pushed</span>
+              </div>
+            </Link>
+          )
+        })}
       </section>
     </>
   )

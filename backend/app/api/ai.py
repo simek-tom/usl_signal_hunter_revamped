@@ -36,17 +36,9 @@ def _coerce_setting_str(value: Any, fallback: str) -> str:
     return val or fallback
 
 
-async def _get_setting_value(db: AsyncClient, key: str) -> Any:
-    res = (
-        await db.table("settings")
-        .select("value")
-        .eq("key", key)
-        .limit(1)
-        .execute()
-    )
-    if not (res.data or []):
-        return None
-    return res.data[0].get("value")
+def _get_setting_value(key: str) -> Any:
+    from app.core.local_settings import get as local_get
+    return local_get(key)
 
 
 def _latest_message_text(messages: list[dict]) -> str:
@@ -149,9 +141,9 @@ async def ai_chat(
         raise HTTPException(status_code=404, detail="Entry not found")
     entry = entry_res.data
 
-    model_value = await _get_setting_value(db, "gemini_model")
+    model_value = _get_setting_value("gemini_model")
     model_name = _coerce_setting_str(model_value, "gemini-2.0-flash")
-    system_template = await _get_setting_value(db, "gemini_system_prompt")
+    system_template = _get_setting_value("gemini_system_prompt")
     system_prompt = _build_system_prompt(system_template, entry)
 
     history = _normalize_chat_state(entry.get("ai_chat_state"))

@@ -13,12 +13,11 @@ from supabase import AsyncClient
 
 from app.core.supabase import get_supabase
 
-# Reuse select clauses and helpers from batches.py
-from app.api.batches import (
-    _DRAFT_ENTRIES_SELECT,
-    _normalize_crunchbase_status,
-    _is_post_author,
-    _is_from_company,
+from app.api._helpers import (
+    DRAFT_ENTRIES_SELECT as _DRAFT_ENTRIES_SELECT,
+    normalize_crunchbase_status as _normalize_crunchbase_status,
+    is_post_author as _is_post_author,
+    is_from_company as _is_from_company,
 )
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])

@@ -1,6 +1,7 @@
 import os
 import sys
 import threading
+import subprocess
 import webbrowser
 from pathlib import Path
 
@@ -39,6 +40,13 @@ if __name__ == "__main__":
     if auto_open:
         url = f"http://{_to_browser_host(host)}:{port}"
         # Run in the background so server startup is not blocked.
-        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+        def _open_in_chrome(url: str) -> None:
+            try:
+                # Opens in an existing Chrome window if one is running
+                subprocess.run(["open", "-a", "Google Chrome", url], check=True)
+            except Exception:
+                webbrowser.open(url)  # fallback
+
+        threading.Timer(0.8, lambda: _open_in_chrome(url)).start()
 
     uvicorn.run("run:app", host=host, port=port, reload=reload)

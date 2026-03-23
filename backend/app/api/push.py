@@ -123,7 +123,7 @@ async def push_leadspicker(
         except Exception:
             pass  # mapping is optional; proceed without it
 
-    return await push_to_leadspicker(db, body.entry_ids, body.project_id, push_map=push_map)
+    return await push_to_leadspicker(db, body.entry_ids, body.project_id, push_map=push_map, pipeline_key=body.pipeline_key)
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +162,7 @@ async def push_airtable(
             pass  # optional; proceed without it
 
     try:
-        return await push_entries_to_airtable(db, body.entry_ids, table_name, push_map=push_map)
+        return await push_entries_to_airtable(db, body.entry_ids, table_name, push_map=push_map, pipeline_key=body.pipeline_key)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 

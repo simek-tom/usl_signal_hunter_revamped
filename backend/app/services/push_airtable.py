@@ -274,6 +274,7 @@ async def create_lp_airtable_records(
     entry_ids: list[str],
     table_name: str,
     push_map: Optional[dict] = None,
+    pipeline_key: str | None = None,
 ) -> dict:
     """
     Create Airtable records for the given entry IDs.
@@ -317,24 +318,23 @@ async def create_lp_airtable_records(
                 response_data=response_data,
             )
 
-        # Record contacted companies on success
+        # Record in blacklist on success
         if push_status == "success":
-            from app.services.leadspicker_normalize import normalize_domain, make_fingerprint
-            from app.core.utils import normalize_company_name
+            from app.api._helpers import build_blacklist_row
             for entry_obj in chunk:
                 sig = entry_obj.get("signals") or {}
                 co = sig.get("companies") or {}
-                co_name = co.get("name_raw") or ""
-                co_domain = normalize_domain(co.get("website") or co.get("domain_normalized") or "")
                 try:
-                    await db.table("contacted_companies").insert({
-                        "company_name_normalized": normalize_company_name(co_name) if co_name else None,
-                        "domain_normalized": co_domain or None,
-                        "linkedin_url": co.get("linkedin_url") or None,
-                        "fingerprint": make_fingerprint(co_name, co_domain),
-                        "contacted_via": entry_obj.get("pipeline_type"),
-                        "pipeline_entry_id": entry_obj["id"],
-                    }).execute()
+                    row = build_blacklist_row(
+                        company_name=co.get("name_raw") or "",
+                        company_linkedin=co.get("linkedin_url"),
+                        company_website=co.get("website") or co.get("domain_normalized"),
+                        reason="contacted",
+                        added_by="auto:push_airtable",
+                        origin=pipeline_key or entry_obj.get("pipeline_type"),
+                        pipeline_entry_id=entry_obj["id"],
+                    )
+                    await db.table("blacklisted_companies").insert(row).execute()
                 except Exception:
                     pass  # non-blocking
 
@@ -345,6 +345,7 @@ async def update_crunchbase_airtable_records(
     db: AsyncClient,
     entry_ids: list[str],
     table_name: str,
+    pipeline_key: str | None = None,
 ) -> dict:
     """
     Crunchbase path:
@@ -392,27 +393,26 @@ async def update_crunchbase_airtable_records(
                 response_data=response_data,
             )
 
-        # Record contacted companies on success
+        # Record in blacklist on success
         if push_status == "success":
-            from app.services.leadspicker_normalize import normalize_domain, make_fingerprint
-            from app.core.utils import normalize_company_name
+            from app.api._helpers import build_blacklist_row
             for entry_id_c, _, _ in chunk:
                 entry_obj = next((e for e in ordered if e["id"] == entry_id_c), None)
                 if not entry_obj:
                     continue
                 sig = entry_obj.get("signals") or {}
                 co = sig.get("companies") or {}
-                co_name = co.get("name_raw") or ""
-                co_domain = normalize_domain(co.get("website") or co.get("domain_normalized") or "")
                 try:
-                    await db.table("contacted_companies").insert({
-                        "company_name_normalized": normalize_company_name(co_name) if co_name else None,
-                        "domain_normalized": co_domain or None,
-                        "linkedin_url": co.get("linkedin_url") or None,
-                        "fingerprint": make_fingerprint(co_name, co_domain),
-                        "contacted_via": "crunchbase",
-                        "pipeline_entry_id": entry_id_c,
-                    }).execute()
+                    row = build_blacklist_row(
+                        company_name=co.get("name_raw") or "",
+                        company_linkedin=co.get("linkedin_url"),
+                        company_website=co.get("website") or co.get("domain_normalized"),
+                        reason="contacted",
+                        added_by="auto:push_airtable_cb",
+                        origin=pipeline_key or "crunchbase",
+                        pipeline_entry_id=entry_id_c,
+                    )
+                    await db.table("blacklisted_companies").insert(row).execute()
                 except Exception:
                     pass  # non-blocking
 
@@ -424,6 +424,7 @@ async def push_entries_to_airtable(
     entry_ids: list[str],
     table_name: str,
     push_map: Optional[dict] = None,
+    pipeline_key: str | None = None,
 ) -> dict:
     """
     Unified Airtable push dispatcher by pipeline_type.
@@ -447,5 +448,5 @@ async def push_entries_to_airtable(
 
     pipeline_type = next(iter(types), "")
     if pipeline_type == "crunchbase":
-        return await update_crunchbase_airtable_records(db, entry_ids, table_name)
-    return await create_lp_airtable_records(db, entry_ids, table_name, push_map=push_map)
+        return await update_crunchbase_airtable_records(db, entry_ids, table_name, pipeline_key=pipeline_key)
+    return await create_lp_airtable_records(db, entry_ids, table_name, push_map=push_map, pipeline_key=pipeline_key)

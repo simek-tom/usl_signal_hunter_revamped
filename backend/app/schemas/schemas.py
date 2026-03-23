@@ -59,16 +59,26 @@ class LpProjectRead(BaseModel):
 
 class BlacklistCreate(BaseModel):
     company_name: str
+    company_linkedin: Optional[str] = None
+    company_website: Optional[str] = None
     reason: Optional[str] = None
     added_by: Optional[str] = None
+    origin: Optional[str] = None
+    pipeline_entry_id: Optional[str] = None
 
 
 class BlacklistRead(BaseModel):
     id: UUID
     company_name: str
     company_name_normalized: Optional[str] = None
+    company_linkedin: Optional[str] = None
+    company_website: Optional[str] = None
+    linkedin_slug: Optional[str] = None
+    root_domain: Optional[str] = None
     reason: Optional[str] = None
     added_by: Optional[str] = None
+    origin: Optional[str] = None
+    pipeline_entry_id: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -5,6 +5,7 @@ import SettingsPage from './pages/SettingsPage'
 import PipelineDashboard from './pages/PipelineDashboard'
 import AnalysisView from './pages/AnalysisView'
 import DraftingView from './pages/DraftingView'
+import BlacklistPage from './pages/BlacklistPage'
 
 function App() {
   return (
@@ -17,6 +18,9 @@ function App() {
         <NavLink to="/settings" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
           Settings
         </NavLink>
+        <NavLink to="/blacklist" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+          Blacklist
+        </NavLink>
         <NavDropdown sourceType="leadspicker" label="Leadspicker" />
         <NavDropdown sourceType="crunchbase" label="Crunchbase" />
         <NavDropdown sourceType="news" label="News" />
@@ -26,6 +30,7 @@ function App() {
         <Routes>
           <Route path="/" element={<HomeDashboard />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/blacklist" element={<BlacklistPage />} />
           <Route path="/pipeline/:type" element={<PipelineDashboard />} />
           <Route path="/pipeline/new" element={<PipelineDashboard />} />
           <Route path="/analyze/:pipelineKey" element={<AnalysisView />} />

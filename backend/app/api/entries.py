@@ -8,7 +8,7 @@ from supabase import AsyncClient
 
 from app.core.supabase import get_supabase
 from app.models.models import RelevanceLabel
-from app.api.batches import _ENTRIES_SELECT
+from app.api._helpers import ENTRIES_SELECT as _ENTRIES_SELECT
 from app.services.leadspicker_normalize import make_fingerprint, normalize_domain
 
 router = APIRouter(prefix="/entries", tags=["entries"])

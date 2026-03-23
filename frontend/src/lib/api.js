@@ -18,11 +18,14 @@ async function request(path, { method = 'GET', body, isForm = false } = {}) {
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`
     try {
-      const data = await res.json()
-      detail = data.detail || JSON.stringify(data)
-    } catch {
-      detail = await res.text()
-    }
+      const text = await res.text()
+      try {
+        const data = JSON.parse(text)
+        detail = data.detail || JSON.stringify(data)
+      } catch {
+        if (text) detail = text
+      }
+    } catch { /* ignore */ }
     throw new Error(detail || 'Request failed')
   }
 
@@ -40,14 +43,6 @@ export const api = {
       method: 'PUT',
       body: { values },
     }),
-
-  getBatches: () => request('/batches'),
-  getBatchEntries: (batchId) => request(`/batches/${batchId}/entries-full`),
-  getBatchContext: (batchId) => request(`/batches/${batchId}/context`),
-  finishLabeling: (batchId) => request(`/batches/${batchId}/finish-labeling`, { method: 'POST' }),
-  startDrafting: (batchId) => request(`/batches/${batchId}/start-drafting`, { method: 'POST' }),
-  getDraftEntries: (batchId) => request(`/batches/${batchId}/draft-entries-full`),
-  finishDrafting: (batchId) => request(`/batches/${batchId}/finish-drafting`, { method: 'POST' }),
 
   listProjects: () => request('/lp-projects'),
   refreshProjects: () => request('/lp-projects/refresh', { method: 'POST' }),
@@ -202,8 +197,13 @@ export const api = {
     request(`/pipeline/${pipelineKey}/label-ai-classifier-no`, { method: 'POST' }),
 
   // Staging
-  getStagingEntries: (pipelineKey, { unlabeledOnly = false } = {}) =>
-    request(`/staging/${pipelineKey}/entries${unlabeledOnly ? '?unlabeled_only=true' : ''}`),
+  getStagingEntries: (pipelineKey, { unlabeledOnly = false, label = null } = {}) => {
+    const params = new URLSearchParams()
+    if (label) params.set('label', label)
+    else if (unlabeledOnly) params.set('unlabeled_only', 'true')
+    const qs = params.toString()
+    return request(`/staging/${pipelineKey}/entries${qs ? '?' + qs : ''}`)
+  },
   labelStagingEntry: ({ pipelineKey, stagingId, label, learningData }) =>
     request(`/staging/${pipelineKey}/${stagingId}/label`, {
       method: 'POST',
@@ -224,9 +224,44 @@ export const api = {
       method: 'POST',
       body: {},
     }),
-  checkContacted: (payload) =>
-    request('/staging/_contacted-check', {
+
+  // Blacklist
+  getBlacklist: () => request('/blacklist'),
+  addToBlacklist: ({ company_name, company_linkedin, company_website, reason, added_by }) =>
+    request('/blacklist', {
       method: 'POST',
-      body: payload,
+      body: {
+        company_name,
+        company_linkedin: company_linkedin || null,
+        company_website: company_website || null,
+        reason: reason || null,
+        added_by: added_by || null,
+      },
+    }),
+  removeFromBlacklist: (id) => request(`/blacklist/${id}`, { method: 'DELETE' }),
+  uploadBlacklistCsv: ({ file, columnMap, defaultReason, defaultAddedBy, defaultContactedVia }) => {
+    const form = new FormData()
+    form.append('file', file)
+    const params = new URLSearchParams()
+    if (columnMap) params.set('column_map', JSON.stringify(columnMap))
+    if (defaultReason) params.set('default_reason', defaultReason)
+    if (defaultAddedBy) params.set('default_added_by', defaultAddedBy)
+    if (defaultContactedVia) params.set('default_origin', defaultContactedVia)
+    const qs = params.toString() ? `?${params.toString()}` : ''
+    return request(`/blacklist/upload-csv${qs}`, {
+      method: 'POST',
+      body: form,
+      isForm: true,
+    })
+  },
+  checkBlacklist: ({ company_name, company_linkedin, company_website }) =>
+    request('/blacklist/check', {
+      method: 'POST',
+      body: { company_name: company_name || null, company_linkedin: company_linkedin || null, company_website: company_website || null },
+    }),
+  checkBlacklistBatch: (items) =>
+    request('/blacklist/check-batch', {
+      method: 'POST',
+      body: items,
     }),
 }

@@ -145,17 +145,9 @@ async def _run_news_import(
     )
 
 
-async def _get_setting_value(db: AsyncClient, key: str):
-    res = (
-        await db.table("settings")
-        .select("value")
-        .eq("key", key)
-        .limit(1)
-        .execute()
-    )
-    if not (res.data or []):
-        return None
-    return res.data[0].get("value")
+def _get_setting_value(key: str):
+    from app.core.local_settings import get as local_get
+    return local_get(key)
 
 
 def _as_str(val, fallback: str) -> str:
@@ -349,17 +341,17 @@ async def import_from_news_api(
     Defaults come from settings table when request fields are omitted.
     """
     default_query = _as_str(
-        await _get_setting_value(db, "news_default_query"),
+        _get_setting_value("news_default_query"),
         "(Series A OR Series B OR Series C) AND (expansion OR global expansion)",
     )
     default_domains = _as_str(
-        await _get_setting_value(db, "news_default_domains"),
+        _get_setting_value("news_default_domains"),
         "techcrunch.com,news.crunchbase.com,venturebeat.com,theinformation.com,sifted.eu",
     )
-    default_language = _as_str(await _get_setting_value(db, "news_default_language"), "en")
-    default_page_size = _as_int(await _get_setting_value(db, "news_default_page_size"), 100)
-    default_max_pages = _as_int(await _get_setting_value(db, "news_default_max_pages"), 3)
-    default_days_back = _as_int(await _get_setting_value(db, "news_default_days_back"), 7)
+    default_language = _as_str(_get_setting_value("news_default_language"), "en")
+    default_page_size = _as_int(_get_setting_value("news_default_page_size"), 100)
+    default_max_pages = _as_int(_get_setting_value("news_default_max_pages"), 3)
+    default_days_back = _as_int(_get_setting_value("news_default_days_back"), 7)
 
     now = datetime.now(timezone.utc)
     default_from = (now - timedelta(days=max(default_days_back, 1))).date().isoformat()

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from supabase import AsyncClient
-
 from app.core.config import settings
 
 RUNTIME_ENV_KEYS: tuple[str, ...] = (
@@ -67,26 +65,16 @@ def clear_runtime_override(key: str) -> None:
     _runtime_overrides.pop(key, None)
 
 
-async def load_runtime_env_overrides(db: AsyncClient) -> None:
+def load_runtime_env_overrides() -> None:
     """
-    Loads env-backed overrides from the settings table.
-    Values are expected under keys matching RUNTIME_ENV_KEYS.
+    Loads env-backed overrides from the local settings file.
     Empty values clear overrides and fall back to .env-backed defaults.
     """
-    if not RUNTIME_ENV_KEYS:
-        return
+    from app.core.local_settings import read_all
 
-    res = (
-        await db.table("settings")
-        .select("key,value")
-        .in_("key", list(RUNTIME_ENV_KEYS))
-        .execute()
-    )
-
+    data = read_all()
     _runtime_overrides.clear()
-    for row in (res.data or []):
-        key = str(row.get("key") or "")
-        if key not in RUNTIME_ENV_KEYS:
-            continue
-        set_runtime_override(key, row.get("value"))
+    for key in RUNTIME_ENV_KEYS:
+        if key in data:
+            set_runtime_override(key, data[key])
 

@@ -1,6 +1,7 @@
 usl_signal_hunter_v2_schema.sql
 USL_Signal_Hunter_v2_Specification (3).pdf
 USL_Signal_Hunter_v2_Prompts (2).pdf
+lp_delete_messages_test.ipynb
 # Secrets / env
 .env
 .env.*
@@ -9,6 +10,9 @@ USL_Signal_Hunter_v2_Prompts (2).pdf
 backend/.env
 backend/.env.*
 !backend/.env.example
+
+# Local settings (never commit — contains API keys and personal config)
+backend/settings_local.json
 
 frontend/.env
 frontend/.env.*

@@ -44,13 +44,17 @@ async def list_staging_entries(
     pipeline_key: str,
     batch_id: Optional[str] = Query(None),
     unlabeled_only: bool = Query(False),
+    label: Optional[str] = Query(None),
     db: AsyncClient = Depends(get_supabase),
 ):
     table = await _get_staging_table(db, pipeline_key)
     query = db.table(table).select("*").eq("pipeline_key", pipeline_key)
     if batch_id:
         query = query.eq("batch_id", batch_id)
-    if unlabeled_only:
+    if label:
+        labels = [l.strip() for l in label.split(",") if l.strip()]
+        query = query.in_("label", labels)
+    elif unlabeled_only:
         query = query.is_("label", "null")
     query = query.order("ai_pre_score", desc=True, nullsfirst=False)
 
@@ -236,16 +240,3 @@ async def finish_analysis(
     result = await promote_batch(db, table, source_type, pipeline_key, batch_id)
     return result
 
-from app.services.contacted_check import check_contacted
-
-@router.post("/_contacted-check")
-async def contacted_check_endpoint(
-    body: dict,
-    db: AsyncClient = Depends(get_supabase),
-):
-    return await check_contacted(
-        db,
-        company_name=body.get("company_name"),
-        company_website=body.get("company_website"),
-        company_linkedin=body.get("company_linkedin"),
-    )

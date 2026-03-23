@@ -92,6 +92,7 @@ export default function PipelineDashboard() {
   const [pushEntries, setPushEntries] = useState([])
   const [pushLoading, setPushLoading] = useState(false)
   const [omitted, setOmitted] = useState(new Set())
+  const [blScores, setBlScores] = useState({})
 
   function notify(kind, text) {
     setMessage({ kind, text })
@@ -119,10 +120,28 @@ export default function PipelineDashboard() {
     setOmitted(new Set())
     try {
       const all = await api.getPipelineDraftEntries(type)
-      setPushEntries(all.filter(e =>
+      const filtered = all.filter(e =>
         e.status !== 'pushed' &&
         e.message && (e.message.final_text || e.message.draft_text)
-      ))
+      )
+      setPushEntries(filtered)
+
+      // Batch blacklist check
+      if (filtered.length > 0) {
+        const items = filtered.map(e => {
+          const co = e.signals?.companies || {}
+          return {
+            id: e.id,
+            company_name: co.name_raw || null,
+            company_linkedin: co.linkedin_url || null,
+            company_website: co.website || co.domain_normalized || null,
+          }
+        })
+        try {
+          const { results } = await api.checkBlacklistBatch(items)
+          setBlScores(results || {})
+        } catch { /* non-critical */ }
+      }
     } catch (err) {
       notify('error', err.message)
     } finally {
@@ -354,6 +373,13 @@ export default function PipelineDashboard() {
               Open Analysis →
             </button>
             <button
+              className="btn"
+              disabled={!((staging.yes || 0) + (staging.cc || 0))}
+              onClick={() => navigate(`/analyze/${type}?label=yes,cc`)}
+            >
+              Edit Entries ({(staging.yes || 0) + (staging.cc || 0)}) →
+            </button>
+            <button
               className="btn warn"
               disabled={busy === 'label-ai-no' || !(staging.unlabeled)}
               onClick={runLabelAiNo}
@@ -409,6 +435,8 @@ export default function PipelineDashboard() {
                       const co = e.signals?.companies || {}
                       const ct = e.contacts || {}
                       const checked = !omitted.has(e.id)
+                      const bl = blScores[e.id]
+                      const blColor = bl?.severity === 'high' ? '#dc2626' : bl?.severity === 'medium' ? '#ea580c' : null
                       return (
                         <label key={e.id} style={{
                           display: 'flex', alignItems: 'center', gap: '0.5rem',
@@ -417,6 +445,7 @@ export default function PipelineDashboard() {
                           background: checked ? 'white' : '#fafaf8', opacity: checked ? 1 : 0.5,
                         }}>
                           <input type="checkbox" checked={checked} onChange={() => toggleOmit(e.id)} />
+                          {blColor && <span title={bl.severity === 'high' ? 'Blacklisted' : 'Potential match'} style={{ width: 8, height: 8, borderRadius: '50%', background: blColor, flexShrink: 0 }} />}
                           <span style={{ fontWeight: 600 }}>{ct.full_name || ct.first_name || '—'}</span>
                           <span style={{ color: 'var(--ink-soft)' }}>· {co.name_raw || '—'}</span>
                         </label>

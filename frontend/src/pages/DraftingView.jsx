@@ -5,6 +5,7 @@ import { highlightText } from '../lib/keywords'
 import MessageBox from '../components/MessageBox'
 import ProgressBar from '../components/ProgressBar'
 import CrunchbaseDiscover from '../components/CrunchbaseDiscover'
+import BlacklistBadge from '../components/BlacklistBadge'
 
 function normalizeChatState(rawState) {
   if (!Array.isArray(rawState)) {
@@ -42,7 +43,6 @@ export default function DraftingView() {
   const [chatMessages, setChatMessages] = useState([])
   const [chatInput, setChatInput] = useState('')
   const [chatBusy, setChatBusy] = useState(false)
-  const [isContacted, setIsContacted] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -96,19 +96,6 @@ export default function DraftingView() {
     setChatMessages(normalizeChatState(current?.ai_chat_state))
     setChatInput('')
   }, [current?.id, current?.ai_chat_state])
-
-  useEffect(() => {
-    if (!current) {
-      setIsContacted(false)
-      return
-    }
-    const co = current?.signals?.companies || {}
-    api.checkContacted({
-      company_name: co.name_raw || null,
-      company_website: co.website || co.domain_normalized || null,
-      company_linkedin: co.linkedin_url || null,
-    }).then((res) => setIsContacted(res?.is_contacted || false)).catch(() => setIsContacted(false))
-  }, [current?.id])
 
   const saveCurrentDraft = useCallback(async () => {
     if (!currentMessage) {
@@ -443,11 +430,6 @@ export default function DraftingView() {
         <article className="panel" style={{ display: 'grid', gap: '0.65rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
             <h2 style={{ margin: 0, fontSize: '1rem' }}>Context</h2>
-            {isContacted ? (
-              <span className="badge" style={{ background: '#e53e3e', color: '#fff', fontWeight: 700 }}>
-                ALREADY CONTACTED
-              </span>
-            ) : null}
           </div>
 
           <div style={{ fontSize: '0.84rem', display: 'grid', gap: '0.3rem' }}>
@@ -456,6 +438,11 @@ export default function DraftingView() {
             </div>
             <div>
               <strong>Company:</strong> {currentCompany.name_raw || 'Unknown'}
+              <BlacklistBadge
+                company_name={currentCompany.name_raw}
+                company_linkedin={currentCompany.linkedin_url}
+                company_website={currentCompany.website || currentCompany.domain_normalized}
+              />
             </div>
             <div>
               <strong>Position:</strong> {currentContact.relation_to_company || 'n/a'}

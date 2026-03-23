@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "USL Signal Hunter",
+  "version": "1.0.0",
+  "description": "Send LinkedIn profile and company data to Signal Hunter enrichment form.",
+  "permissions": ["activeTab", "tabs"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.linkedin.com/in/*",
+        "https://www.linkedin.com/company/*"
+      ],
+      "js": ["content-linkedin.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "http://localhost:8000/*",
+        "http://localhost:5173/*",
+        "http://127.0.0.1:8000/*"
+      ],
+      "js": ["content-app.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

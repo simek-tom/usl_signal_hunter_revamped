@@ -13,9 +13,9 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 
 _ENTRY_CONTEXT_SELECT = (
     "id,pipeline_type,ai_chat_state,"
-    "signals(content_url,content_text,content_summary,ai_classifier,"
-    "companies(name_raw,website,linkedin_url,country,industry,employee_count)),"
-    "contacts(first_name,last_name,full_name,linkedin_url,email,relation_to_company),"
+    "content_url,content_text,content_summary,ai_classifier,"
+    "lead_full_name,lead_first_name,lead_last_name,lead_linkedin,lead_email,lead_position,"
+    "companies(name_raw,website,linkedin_url,country,industry,employee_count),"
     "messages(draft_text,final_text,version)"
 )
 
@@ -69,24 +69,22 @@ def _template_to_text(template: Any) -> str:
 
 
 def _build_system_prompt(template: Any, entry: dict) -> str:
-    sig = entry.get("signals") or {}
-    co = sig.get("companies") or {}
-    ct = entry.get("contacts") or {}
+    co = entry.get("companies") or {}
     msgs = entry.get("messages") or []
 
     context_map = {
         "pipeline_type": entry.get("pipeline_type") or "",
-        "summary": sig.get("content_summary") or "",
-        "ai_classifier": sig.get("ai_classifier") or "",
-        "post_url": sig.get("content_url") or "",
-        "post_text": sig.get("content_text") or "",
+        "summary": entry.get("content_summary") or "",
+        "ai_classifier": entry.get("ai_classifier") or "",
+        "post_url": entry.get("content_url") or "",
+        "post_text": entry.get("content_text") or "",
         "company_name": co.get("name_raw") or "",
         "company_website": co.get("website") or "",
         "company_linkedin": co.get("linkedin_url") or "",
-        "author_name": ct.get("full_name")
-        or f"{ct.get('first_name') or ''} {ct.get('last_name') or ''}".strip(),
-        "author_linkedin": ct.get("linkedin_url") or "",
-        "position": ct.get("relation_to_company") or "",
+        "author_name": entry.get("author_full_name")
+        or f"{entry.get('author_first_name') or ''} {entry.get('author_last_name') or ''}".strip(),
+        "author_linkedin": entry.get("author_linkedin") or "",
+        "position": entry.get("author_position") or "",
         "current_draft": _latest_message_text(msgs),
     }
 

@@ -99,7 +99,7 @@ async def enrich_entry(
     db: AsyncClient = Depends(get_supabase),
 ):
     """
-    Operator enrichment: update company (via enrich_company RPC) and/or contact,
+    Operator enrichment: update company (via enrich_company RPC) and/or lead,
     then mark entry as enriched.
 
     Returns the updated entry in entries-full shape so the frontend can update
@@ -109,15 +109,11 @@ async def enrich_entry(
     now = datetime.now(timezone.utc).isoformat()
 
     # ------------------------------------------------------------------
-    # 1. Fetch current entry to get company_id and contact_id
+    # 1. Fetch current entry
     # ------------------------------------------------------------------
     entry_res = (
         await db.table("pipeline_entries")
-        .select(
-            "id,contact_id,"
-            "signals(id,company_id,"
-            "companies(id,fingerprint,domain_normalized))"
-        )
+        .select("id,company_id,companies(id,fingerprint,domain_normalized)")
         .eq("id", entry_id)
         .single()
         .execute()
@@ -126,10 +122,7 @@ async def enrich_entry(
         raise HTTPException(status_code=404, detail="Entry not found")
 
     entry_raw = entry_res.data
-    sig = entry_raw.get("signals") or {}
-    signal_id: Optional[str] = sig.get("id")
-    company_id: Optional[str] = sig.get("company_id")
-    contact_id: Optional[str] = entry_raw.get("contact_id")
+    company_id: Optional[str] = entry_raw.get("company_id")
 
     # ------------------------------------------------------------------
     # 2. Enrich company (enrich-dont-clobber via RPC)
@@ -192,92 +185,59 @@ async def enrich_entry(
                 )
                 company_id = ins_res.data[0]["id"]
 
-            if signal_id and company_id:
-                await (
-                    db.table("signals")
-                    .update({"company_id": company_id})
-                    .eq("id", signal_id)
-                    .execute()
-                )
-
-            if contact_id and company_id:
-                await (
-                    db.table("contacts")
-                    .update({"company_id": company_id})
-                    .eq("id", contact_id)
-                    .execute()
-                )
+            # Link company to this entry
+            await (
+                db.table("pipeline_entries")
+                .update({"company_id": company_id})
+                .eq("id", entry_id)
+                .execute()
+            )
 
     # ------------------------------------------------------------------
     # 3. Already-contacted check — find pushed entries for this company
     # ------------------------------------------------------------------
     contacted_history: list[dict] = []
     if company_id:
-        # Step 3a: get all signal IDs belonging to this company
-        sigs_res = (
-            await db.table("signals")
-            .select("id")
+        pushed_res = (
+            await db.table("pipeline_entries")
+            .select("id,pipeline_type,pushed_at,content_url")
+            .eq("status", "pushed")
             .eq("company_id", company_id)
             .execute()
         )
-        signal_ids = [r["id"] for r in (sigs_res.data or [])]
-
-        # Step 3b: find pushed pipeline entries referencing those signals
-        if signal_ids:
-            pushed_res = (
-                await db.table("pipeline_entries")
-                .select("id,pipeline_type,pushed_at,signals(content_url)")
-                .eq("status", "pushed")
-                .in_("signal_id", signal_ids)
-                .execute()
+        for row in pushed_res.data or []:
+            contacted_history.append(
+                {
+                    "pipeline_entry_id": row["id"],
+                    "pipeline_type": row["pipeline_type"],
+                    "pushed_at": row.get("pushed_at"),
+                    "content_url": row.get("content_url"),
+                }
             )
-            for row in pushed_res.data or []:
-                s = row.get("signals") or {}
-                contacted_history.append(
-                    {
-                        "pipeline_entry_id": row["id"],
-                        "pipeline_type": row["pipeline_type"],
-                        "pushed_at": row.get("pushed_at"),
-                        "content_url": s.get("content_url"),
-                    }
-                )
 
     # ------------------------------------------------------------------
-    # 4. Upsert contact
+    # 4. Update lead fields on pipeline_entries
     # ------------------------------------------------------------------
-    contact_fields: dict = {}
+    lead_fields: dict = {}
     if body.full_name is not None:
         first, last = _split_name(body.full_name)
-        contact_fields["full_name"] = body.full_name
-        contact_fields["first_name"] = first
-        contact_fields["last_name"] = last
+        lead_fields["lead_full_name"] = body.full_name
+        lead_fields["lead_first_name"] = first
+        lead_fields["lead_last_name"] = last
     if body.linkedin_url is not None:
-        contact_fields["linkedin_url"] = body.linkedin_url
+        lead_fields["lead_linkedin"] = body.linkedin_url
     if body.relation_to_company is not None:
-        contact_fields["relation_to_company"] = body.relation_to_company
+        lead_fields["lead_position"] = body.relation_to_company
 
-    if contact_fields:
-        if contact_id:
-            if company_id:
-                contact_fields["company_id"] = company_id
-            await (
-                db.table("contacts")
-                .update(contact_fields)
-                .eq("id", contact_id)
-                .execute()
-            )
-        else:
-            # Create new contact and link to entry
-            contact_fields["company_id"] = company_id
-            contact_fields["source"] = "operator"
-            ct_res = await db.table("contacts").insert(contact_fields).execute()
-            contact_id = ct_res.data[0]["id"]
-            await (
-                db.table("pipeline_entries")
-                .update({"contact_id": contact_id})
-                .eq("id", entry_id)
-                .execute()
-            )
+    if lead_fields:
+        if company_id:
+            lead_fields["company_id"] = company_id
+        await (
+            db.table("pipeline_entries")
+            .update(lead_fields)
+            .eq("id", entry_id)
+            .execute()
+        )
 
     # ------------------------------------------------------------------
     # 5. Mark entry enriched
@@ -315,8 +275,8 @@ async def crunchbase_action(
     """
     Crunchbase analysis action handler.
 
-    - Persists inline CB fields to signals.source_metadata
-    - Mirrors main contact to contacts.linkedin_url
+    - Persists inline CB fields to source_metadata
+    - Mirrors main contact to lead_linkedin
     - Mirrors message_fin to messages.final_text/draft_text
     - Applies action-driven status transitions
     """
@@ -324,7 +284,7 @@ async def crunchbase_action(
 
     entry_res = (
         await db.table("pipeline_entries")
-        .select("id,pipeline_type,signal_id,contact_id,status,relevant,signals(id,company_id,source_metadata)")
+        .select("id,pipeline_type,status,relevant,company_id,source_metadata")
         .eq("id", entry_id)
         .single()
         .execute()
@@ -336,10 +296,8 @@ async def crunchbase_action(
     if entry.get("pipeline_type") != "crunchbase":
         raise HTTPException(status_code=422, detail="CB actions are only valid for crunchbase pipeline entries")
 
-    sig = entry.get("signals") or {}
-    signal_id = sig.get("id") or entry.get("signal_id")
-    company_id = sig.get("company_id")
-    meta = sig.get("source_metadata") or {}
+    company_id = entry.get("company_id")
+    meta = entry.get("source_metadata") or {}
     if not isinstance(meta, dict):
         meta = {}
 
@@ -365,48 +323,20 @@ async def crunchbase_action(
     elif body.action in {"eliminate", "uneliminate"}:
         meta.pop("entry_workflow_status", None)
 
-    if signal_id:
-        await (
-            db.table("signals")
-            .update({"source_metadata": meta})
-            .eq("id", signal_id)
-            .execute()
-        )
-
-    # ------------------------------------------------------------------
-    # 2) Update/Create main contact row
-    # ------------------------------------------------------------------
+    # Update source_metadata + lead_linkedin on the entry directly
+    entry_update_fields: dict = {"source_metadata": meta}
     if body.main_contact is not None:
-        linkedin = body.main_contact or None
-        if entry.get("contact_id"):
-            await (
-                db.table("contacts")
-                .update({"linkedin_url": linkedin})
-                .eq("id", entry["contact_id"])
-                .execute()
-            )
-        elif linkedin:
-            ct_res = (
-                await db.table("contacts")
-                .insert(
-                    {
-                        "company_id": company_id,
-                        "linkedin_url": linkedin,
-                        "source": "crunchbase",
-                    }
-                )
-                .execute()
-            )
-            if ct_res.data:
-                await (
-                    db.table("pipeline_entries")
-                    .update({"contact_id": ct_res.data[0]["id"]})
-                    .eq("id", entry_id)
-                    .execute()
-                )
+        entry_update_fields["lead_linkedin"] = body.main_contact or None
+
+    await (
+        db.table("pipeline_entries")
+        .update(entry_update_fields)
+        .eq("id", entry_id)
+        .execute()
+    )
 
     # ------------------------------------------------------------------
-    # 3) Mirror Message fin into messages table for cross-push filtering
+    # 2) Mirror Message fin into messages table for cross-push filtering
     # ------------------------------------------------------------------
     if body.message_fin is not None:
         msgs_res = (
@@ -445,7 +375,7 @@ async def crunchbase_action(
             )
 
     # ------------------------------------------------------------------
-    # 4) Apply action-driven entry state update
+    # 3) Apply action-driven entry state update
     # ------------------------------------------------------------------
     entry_update: dict = {}
     if body.action == "yes":
@@ -478,14 +408,8 @@ async def crunchbase_action(
                 and "invalid input value for enum entry_status" in str(exc)
             ):
                 await (
-                    db.table("signals")
-                    .update({"source_metadata": meta})
-                    .eq("id", signal_id)
-                    .execute()
-                )
-                await (
                     db.table("pipeline_entries")
-                    .update({"status": "drafted", "drafted_at": now})
+                    .update({"source_metadata": meta, "status": "drafted", "drafted_at": now})
                     .eq("id", entry_id)
                     .execute()
                 )
@@ -501,8 +425,7 @@ async def crunchbase_action(
     )
 
     updated_entry = updated_res.data or {}
-    updated_sig = updated_entry.get("signals") or {}
-    updated_meta = updated_sig.get("source_metadata") or {}
+    updated_meta = updated_entry.get("source_metadata") or {}
     current_status = str(updated_entry.get("status") or "").strip().lower()
     if (
         isinstance(updated_meta, dict)

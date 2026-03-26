@@ -135,6 +135,8 @@ async def label_staging_entry(
 
 class EnrichRequest(BaseModel):
     enriched_contact_name: Optional[str] = None
+    enriched_contact_first_name: Optional[str] = None
+    enriched_contact_last_name: Optional[str] = None
     enriched_contact_linkedin: Optional[str] = None
     enriched_contact_position: Optional[str] = None
     enriched_company_name: Optional[str] = None

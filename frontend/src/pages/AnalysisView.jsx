@@ -178,12 +178,12 @@ export default function AnalysisView() {
       })
     } else {
       setEnrichForm({
-        enriched_contact_name: contactName,
-        enriched_contact_linkedin: contactLinkedin,
-        enriched_contact_position: contactPosition,
-        enriched_company_name: companyName,
-        enriched_company_website: companyWebsite,
-        enriched_company_linkedin: companyLinkedin,
+        enriched_contact_name: current?.enriched_contact_name || '',
+        enriched_contact_linkedin: current?.enriched_contact_linkedin || '',
+        enriched_contact_position: current?.enriched_contact_position || '',
+        enriched_company_name: current?.enriched_company_name || '',
+        enriched_company_website: current?.enriched_company_website || '',
+        enriched_company_linkedin: current?.enriched_company_linkedin || '',
       })
       if (current.label !== 'yes') setEnrichOpen(false)
     }

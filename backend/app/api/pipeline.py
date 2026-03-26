@@ -17,7 +17,7 @@ from app.api._helpers import (
     DRAFT_ENTRIES_SELECT as _DRAFT_ENTRIES_SELECT,
     normalize_crunchbase_status as _normalize_crunchbase_status,
     is_post_author as _is_post_author,
-    is_from_company as _is_from_company,
+    is_same_person as _is_same_person,
 )
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
@@ -148,10 +148,9 @@ async def get_pipeline_draft_entries(
 
     for e in entries:
         _normalize_crunchbase_status(e)
-        sig = e.get("signals") or {}
-        ct = e.get("contacts") or {}
-        e["is_post_author"] = _is_post_author(ct, sig)
-        e["is_from_company"] = _is_from_company(ct, sig)
+        e["is_post_author"] = _is_post_author(e)
+        e["is_from_company"] = True  # company_id is directly on the entry
+        e["is_same_person"] = _is_same_person(e)
         msgs = e.get("messages") or []
         e["message"] = max(msgs, key=lambda m: m.get("version", 0)) if msgs else None
 

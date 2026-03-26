@@ -76,9 +76,7 @@ export default function DraftingView() {
 
   const current = entries[currentIndex] || null
   const currentMessage = current?.message || null
-  const currentSignal = current?.signals || {}
-  const currentContact = current?.contacts || {}
-  const currentCompany = currentSignal?.companies || {}
+  const currentCompany = current?.companies || {}
   const isLinkedinLeadspicker = isLinkedinLeadspickerPipeline(current?.pipeline_type)
 
   useEffect(() => {
@@ -413,8 +411,8 @@ export default function DraftingView() {
                         onChange={(e) => setRemoveMap((m) => ({ ...m, [row.id]: e.target.checked }))}
                       />
                     </td>
-                    <td style={{ padding: '0.3rem 0.5rem' }}>{row.contacts?.full_name || 'Unknown'}</td>
-                    <td style={{ padding: '0.3rem 0.5rem' }}>{row.signals?.companies?.name_raw || 'Unknown'}</td>
+                    <td style={{ padding: '0.3rem 0.5rem' }}>{row.lead_full_name || 'Unknown'}</td>
+                    <td style={{ padding: '0.3rem 0.5rem' }}>{row.companies?.name_raw || 'Unknown'}</td>
                     <td style={{ padding: '0.3rem 0.5rem' }}>
                       {(row.message?.draft_text || '').trim() ? 'yes' : 'no'}
                     </td>
@@ -432,12 +430,50 @@ export default function DraftingView() {
             <h2 style={{ margin: 0, fontSize: '1rem' }}>Context</h2>
           </div>
 
+          {current.is_same_person ? (
+            <div style={{ fontSize: '0.84rem', display: 'grid', gap: '0.3rem' }}>
+              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                <strong>Lead / Author</strong>
+                <span className="badge green" style={{ fontSize: '0.7rem' }}>same person</span>
+              </div>
+              <div>{current.lead_full_name || `${current.lead_first_name || ''} ${current.lead_last_name || ''}`.trim() || 'Unknown'}</div>
+              <div>Position: {current.lead_position || 'n/a'}</div>
+              {current.lead_linkedin && (
+                <div>LinkedIn: <a href={current.lead_linkedin} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>profile</a></div>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', fontSize: '0.84rem' }}>
+              <div style={{ display: 'grid', gap: '0.3rem', alignContent: 'start' }}>
+                <strong>Lead (Contact)</strong>
+                <div>{current.lead_full_name || `${current.lead_first_name || ''} ${current.lead_last_name || ''}`.trim() || 'Unknown'}</div>
+                <div>Position: {current.lead_position || 'n/a'}</div>
+                {current.lead_company_name && <div>Company: {current.lead_company_name}</div>}
+                {current.lead_linkedin && (
+                  <div>LinkedIn: <a href={current.lead_linkedin} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>profile</a></div>
+                )}
+                {current.lead_company_linkedin && (
+                  <div>Co. LinkedIn: <a href={current.lead_company_linkedin} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>page</a></div>
+                )}
+              </div>
+              <div style={{ display: 'grid', gap: '0.3rem', alignContent: 'start' }}>
+                <strong>Author (Post)</strong>
+                <div>{current.author_full_name || 'Unknown'}</div>
+                <div>Position: {current.author_position || 'n/a'}</div>
+                {current.author_company_name && <div>Company: {current.author_company_name}</div>}
+                {current.author_linkedin && (
+                  <div>LinkedIn: <a href={current.author_linkedin} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>profile</a></div>
+                )}
+                {current.author_company_linkedin && (
+                  <div>Co. LinkedIn: <a href={current.author_company_linkedin} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>page</a></div>
+                )}
+              </div>
+            </div>
+          )}
+
           <div style={{ fontSize: '0.84rem', display: 'grid', gap: '0.3rem' }}>
             <div>
-              <strong>Author:</strong> {currentContact.full_name || `${currentContact.first_name || ''} ${currentContact.last_name || ''}`.trim() || 'Unknown'}
-            </div>
-            <div>
-              <strong>Company:</strong> {currentCompany.name_raw || 'Unknown'}
+              <strong>Company:</strong> {current.lead_company_name || currentCompany.name_raw || 'Unknown'}
               <BlacklistBadge
                 company_name={currentCompany.name_raw}
                 company_linkedin={currentCompany.linkedin_url}
@@ -445,27 +481,14 @@ export default function DraftingView() {
               />
             </div>
             <div>
-              <strong>Position:</strong> {currentContact.relation_to_company || 'n/a'}
-            </div>
-            <div>
-              <strong>AI classifier:</strong> {currentSignal.ai_classifier || 'n/a'}
-            </div>
-            <div>
-              <strong>Signal URL:</strong>{' '}
-              {currentSignal.content_url ? (
-                <a href={currentSignal.content_url} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>
-                  open
-                </a>
-              ) : (
-                'n/a'
-              )}
+              <strong>AI classifier:</strong> {current.ai_classifier || 'n/a'}
             </div>
           </div>
 
           {isLinkedinLeadspicker ? (
             <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-              {currentSignal.content_url ? (
-                <a className="btn" href={currentSignal.content_url} target="_blank" rel="noreferrer">
+              {current.content_url ? (
+                <a className="btn" href={current.content_url} target="_blank" rel="noreferrer">
                   Open LinkedIn post
                 </a>
               ) : (
@@ -478,7 +501,7 @@ export default function DraftingView() {
 
           <div className="panel" style={{ margin: 0, padding: '0.7rem', background: '#fff' }}>
             <div style={{ fontSize: '0.75rem', color: 'var(--ink-soft)' }}>Summary</div>
-            <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.82rem' }}>{currentSignal.content_summary || 'No summary'}</div>
+            <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.82rem' }}>{current.content_summary || 'No summary'}</div>
           </div>
 
           <div className="panel" style={{ margin: 0, padding: '0.7rem', background: '#fff', display: 'grid', gap: '0.4rem' }}>
@@ -502,7 +525,7 @@ export default function DraftingView() {
           <div className="panel" style={{ margin: 0, padding: '0.7rem', background: '#fff' }}>
             <div style={{ fontSize: '0.75rem', color: 'var(--ink-soft)' }}>Post excerpt</div>
             <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.82rem', maxHeight: 320, overflowY: 'auto' }}>
-              {highlightText(currentSignal.content_text || '').map((part, idx) =>
+              {highlightText(current.content_text || '').map((part, idx) =>
                 part.hit ? <mark className="marked-hit" key={idx}>{part.value}</mark> : <span key={idx}>{part.value}</span>
               )}
             </div>

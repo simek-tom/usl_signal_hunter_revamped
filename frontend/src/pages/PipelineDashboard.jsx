@@ -129,7 +129,7 @@ export default function PipelineDashboard() {
       // Batch blacklist check
       if (filtered.length > 0) {
         const items = filtered.map(e => {
-          const co = e.signals?.companies || {}
+          const co = e.companies || {}
           return {
             id: e.id,
             company_name: co.name_raw || null,
@@ -432,8 +432,8 @@ export default function PipelineDashboard() {
                 <>
                   <div style={{ border: '1px solid var(--line)', borderRadius: 8, maxHeight: 220, overflowY: 'auto' }}>
                     {pushEntries.map(e => {
-                      const co = e.signals?.companies || {}
-                      const ct = e.contacts || {}
+                      const co = e.companies || {}
+                      const ct = e
                       const checked = !omitted.has(e.id)
                       const bl = blScores[e.id]
                       const blColor = bl?.severity === 'high' ? '#dc2626' : bl?.severity === 'medium' ? '#ea580c' : null
@@ -446,7 +446,7 @@ export default function PipelineDashboard() {
                         }}>
                           <input type="checkbox" checked={checked} onChange={() => toggleOmit(e.id)} />
                           {blColor && <span title={bl.severity === 'high' ? 'Blacklisted' : 'Potential match'} style={{ width: 8, height: 8, borderRadius: '50%', background: blColor, flexShrink: 0 }} />}
-                          <span style={{ fontWeight: 600 }}>{ct.full_name || ct.first_name || '—'}</span>
+                          <span style={{ fontWeight: 600 }}>{ct.lead_full_name || ct.lead_first_name || '—'}</span>
                           <span style={{ color: 'var(--ink-soft)' }}>· {co.name_raw || '—'}</span>
                         </label>
                       )

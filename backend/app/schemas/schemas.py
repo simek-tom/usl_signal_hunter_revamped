@@ -171,8 +171,6 @@ class SignalRead(SignalBase):
 # ---------------------------------------------------------------------------
 
 class PipelineEntryBase(BaseModel):
-    signal_id: UUID
-    contact_id: Optional[UUID] = None
     pipeline_type: PipelineType
     batch_id: Optional[UUID] = None
     status: EntryStatus = EntryStatus.new
@@ -180,6 +178,36 @@ class PipelineEntryBase(BaseModel):
     learning_data: bool = False
     ai_pre_score: Optional[float] = None
     ai_chat_state: Optional[list[Any]] = None
+    # Company
+    company_id: Optional[UUID] = None
+    # Signal data (denormalized)
+    source_type: Optional[str] = None
+    content_url: Optional[str] = None
+    content_text: Optional[str] = None
+    content_title: Optional[str] = None
+    content_summary: Optional[str] = None
+    ai_classifier: Optional[str] = None
+    source_robot: Optional[str] = None
+    external_id: Optional[str] = None
+    author_full_name: Optional[str] = None
+    author_first_name: Optional[str] = None
+    author_last_name: Optional[str] = None
+    author_linkedin: Optional[str] = None
+    author_position: Optional[str] = None
+    author_company_name: Optional[str] = None
+    author_company_linkedin: Optional[str] = None
+    published_at: Optional[datetime] = None
+    fetched_at: Optional[datetime] = None
+    source_metadata: Optional[dict[str, Any]] = None
+    # Lead (contact) data (denormalized)
+    lead_full_name: Optional[str] = None
+    lead_first_name: Optional[str] = None
+    lead_last_name: Optional[str] = None
+    lead_linkedin: Optional[str] = None
+    lead_email: Optional[str] = None
+    lead_position: Optional[str] = None
+    lead_company_name: Optional[str] = None
+    lead_company_linkedin: Optional[str] = None
 
 
 class PipelineEntryRead(PipelineEntryBase):

@@ -19,10 +19,10 @@ from app.services.airtable_client import batch_create, batch_update
 from app.services.leadspicker_normalize import _chunks
 
 _PUSH_SELECT = (
-    "id,pipeline_type,status,signal_id,contact_id,"
-    "signals(id,external_id,content_url,content_text,content_summary,ai_classifier,source_metadata,company_id,"
-    "companies(id,name_raw,domain_normalized,website,linkedin_url,country,employee_count,industry)),"
-    "contacts(id,first_name,last_name,full_name,linkedin_url,email,relation_to_company),"
+    "id,pipeline_type,status,company_id,source_type,"
+    "external_id,content_url,content_text,content_summary,ai_classifier,source_metadata,"
+    "lead_name,lead_first_name,lead_last_name,lead_linkedin,lead_email,lead_position,"
+    "companies(id,name_raw,domain_normalized,website,linkedin_url,country,employee_count,industry),"
     "messages(id,final_text,draft_text,version)"
 )
 
@@ -60,23 +60,21 @@ def _best_message_text(msgs: list[dict]) -> str:
 
 
 def _build_airtable_fields(entry: dict, push_map: Optional[dict] = None) -> dict:
-    sig = entry.get("signals") or {}
-    co = sig.get("companies") or {}
-    ct = entry.get("contacts") or {}
+    co = entry.get("companies") or {}
     msgs = entry.get("messages") or []
 
     if push_map:
         # Custom mapping: { "Airtable Column Name": "internal_field" }
         _field_values = {
-            "content_url": sig.get("content_url") or "",
-            "content_text": sig.get("content_text") or "",
-            "content_summary": sig.get("content_summary") or "",
-            "ai_classifier": str(sig.get("ai_classifier") or ""),
-            "first_name": ct.get("first_name") or "",
-            "last_name": ct.get("last_name") or "",
-            "email": ct.get("email") or "",
-            "contact_linkedin": ct.get("linkedin_url") or "",
-            "position": ct.get("relation_to_company") or "",
+            "content_url": entry.get("content_url") or "",
+            "content_text": entry.get("content_text") or "",
+            "content_summary": entry.get("content_summary") or "",
+            "ai_classifier": str(entry.get("ai_classifier") or ""),
+            "first_name": entry.get("lead_first_name") or "",
+            "last_name": entry.get("lead_last_name") or "",
+            "email": entry.get("lead_email") or "",
+            "contact_linkedin": entry.get("lead_linkedin") or "",
+            "position": entry.get("lead_position") or "",
             "company_name": co.get("name_raw") or "",
             "company_website": co.get("website") or co.get("domain_normalized") or "",
             "company_linkedin": co.get("linkedin_url") or "",
@@ -90,23 +88,22 @@ def _build_airtable_fields(entry: dict, push_map: Optional[dict] = None) -> dict
         }
 
     return {
-        "First Name": ct.get("first_name") or "",
-        "Last Name": ct.get("last_name") or "",
-        "Full Name": ct.get("full_name") or "",
-        "E-mail": ct.get("email") or "",
-        "Contact LinkedIn profile": ct.get("linkedin_url") or "",
-        "Relation to the company": ct.get("relation_to_company") or "",
+        "First Name": entry.get("lead_first_name") or "",
+        "Last Name": entry.get("lead_last_name") or "",
+        "Full Name": entry.get("lead_name") or "",
+        "E-mail": entry.get("lead_email") or "",
+        "Contact LinkedIn profile": entry.get("lead_linkedin") or "",
+        "Relation to the company": entry.get("lead_position") or "",
         "Company Name": co.get("name_raw") or "",
         "Company website": co.get("website") or co.get("domain_normalized") or "",
         "Company LinkedIn URL": co.get("linkedin_url") or "",
-        "Base post URL": sig.get("content_url") or "",
+        "Base post URL": entry.get("content_url") or "",
         "General message": _best_message_text(msgs),
     }
 
 
 def _cb_message_text(entry: dict) -> str:
-    sig = entry.get("signals") or {}
-    meta = sig.get("source_metadata") or {}
+    meta = entry.get("source_metadata") or {}
     if not isinstance(meta, dict):
         meta = {}
     if meta.get("message_fin"):
@@ -117,11 +114,10 @@ def _cb_message_text(entry: dict) -> str:
 
 
 def _cb_record_id(entry: dict) -> Optional[str]:
-    sig = entry.get("signals") or {}
-    ext = str(sig.get("external_id") or "").strip()
+    ext = str(entry.get("external_id") or "").strip()
     if ext:
         return ext
-    meta = sig.get("source_metadata") or {}
+    meta = entry.get("source_metadata") or {}
     if isinstance(meta, dict):
         fallback = str(meta.get("airtable_record_id") or "").strip()
         if fallback:
@@ -154,10 +150,8 @@ def _resolve_existing_field(raw_fields: dict, candidates: list[str]) -> Optional
 
 
 def _build_cb_update_fields(entry: dict) -> dict:
-    sig = entry.get("signals") or {}
-    co = sig.get("companies") or {}
-    ct = entry.get("contacts") or {}
-    meta = sig.get("source_metadata") or {}
+    co = entry.get("companies") or {}
+    meta = entry.get("source_metadata") or {}
     if not isinstance(meta, dict):
         meta = {}
 
@@ -167,7 +161,7 @@ def _build_cb_update_fields(entry: dict) -> dict:
     fields = _sanitize_cb_fields(raw_fields)
 
     message_fin = _cb_message_text(entry)
-    main_contact = str(meta.get("main_contact") or ct.get("linkedin_url") or "").strip()
+    main_contact = str(meta.get("main_contact") or entry.get("lead_linkedin") or "").strip()
     sec1 = str(meta.get("secondary_contact_1") or "").strip()
     sec2 = str(meta.get("secondary_contact_2") or "").strip()
     sec3 = str(meta.get("secondary_contact_3") or "").strip()
@@ -322,8 +316,7 @@ async def create_lp_airtable_records(
         if push_status == "success":
             from app.api._helpers import build_blacklist_row
             for entry_obj in chunk:
-                sig = entry_obj.get("signals") or {}
-                co = sig.get("companies") or {}
+                co = entry_obj.get("companies") or {}
                 try:
                     row = build_blacklist_row(
                         company_name=co.get("name_raw") or "",
@@ -349,7 +342,7 @@ async def update_crunchbase_airtable_records(
 ) -> dict:
     """
     Crunchbase path:
-      - update existing Airtable rows by record id (signals.external_id)
+      - update existing Airtable rows by record id (external_id)
       - exclude computed/formula columns from payload
     """
     if not entry_ids:
@@ -400,8 +393,7 @@ async def update_crunchbase_airtable_records(
                 entry_obj = next((e for e in ordered if e["id"] == entry_id_c), None)
                 if not entry_obj:
                     continue
-                sig = entry_obj.get("signals") or {}
-                co = sig.get("companies") or {}
+                co = entry_obj.get("companies") or {}
                 try:
                     row = build_blacklist_row(
                         company_name=co.get("name_raw") or "",

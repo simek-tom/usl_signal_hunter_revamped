@@ -26,10 +26,10 @@ from app.services.leadspicker import lp_session
 _DEFAULT_PUSH_LIMIT = 100
 
 _PUSH_SELECT = (
-    "id,pipeline_type,status,signal_id,contact_id,"
-    "signals(id,external_id,content_url,content_text,ai_classifier,source_metadata,company_id,"
-    "companies(id,name_raw,domain_normalized,website,linkedin_url,country)),"
-    "contacts(id,first_name,last_name,full_name,linkedin_url,email,relation_to_company),"
+    "id,pipeline_type,status,company_id,source_type,"
+    "external_id,content_url,content_text,content_summary,ai_classifier,source_metadata,"
+    "lead_full_name,lead_first_name,lead_last_name,lead_linkedin,lead_email,lead_position,lead_company_name,lead_company_linkedin,"
+    "companies(id,name_raw,domain_normalized,website,linkedin_url,country),"
     "messages(id,final_text,draft_text,version)"
 )
 
@@ -53,8 +53,7 @@ def _best_message_text(msgs: list[dict]) -> str:
 
 
 def _cb_message_text(entry: dict) -> str:
-    sig = entry.get("signals") or {}
-    meta = sig.get("source_metadata") or {}
+    meta = entry.get("source_metadata") or {}
     if not isinstance(meta, dict):
         meta = {}
     return (
@@ -70,25 +69,23 @@ def _build_lp_payload(
     message_text: str = "",
     push_map: dict | None = None,
 ) -> dict:
-    sig = entry.get("signals") or {}
-    co = sig.get("companies") or {}
-    ct = entry.get("contacts") or {}
-    meta = sig.get("source_metadata") or {}
+    co = entry.get("companies") or {}
+    meta = entry.get("source_metadata") or {}
     if not isinstance(meta, dict):
         meta = {}
-    linkedin_url = ct.get("linkedin_url") or meta.get("main_contact") or ""
+    linkedin_url = entry.get("lead_linkedin") or meta.get("main_contact") or ""
 
     # Resolve internal field values for custom_fields mapping
     _field_values = {
-        "content_url": sig.get("content_url") or "",
-        "content_text": sig.get("content_text") or "",
-        "content_summary": sig.get("content_summary") or "",
-        "ai_classifier": str(sig.get("ai_classifier") or ""),
-        "first_name": ct.get("first_name") or "",
-        "last_name": ct.get("last_name") or "",
-        "email": ct.get("email") or "",
-        "contact_linkedin": ct.get("linkedin_url") or "",
-        "position": ct.get("relation_to_company") or "",
+        "content_url": entry.get("content_url") or "",
+        "content_text": entry.get("content_text") or "",
+        "content_summary": entry.get("content_summary") or "",
+        "ai_classifier": str(entry.get("ai_classifier") or ""),
+        "first_name": entry.get("lead_first_name") or "",
+        "last_name": entry.get("lead_last_name") or "",
+        "email": entry.get("lead_email") or "",
+        "contact_linkedin": entry.get("lead_linkedin") or "",
+        "position": entry.get("lead_position") or "",
         "company_name": co.get("name_raw") or "",
         "company_website": co.get("website") or co.get("domain_normalized") or "",
         "company_linkedin": co.get("linkedin_url") or "",
@@ -106,18 +103,18 @@ def _build_lp_payload(
     else:
         # Default behaviour
         custom_fields = {
-            "base_post_url": sig.get("content_url") or "",
+            "base_post_url": entry.get("content_url") or "",
         }
         if message_text:
             custom_fields["message_text"] = message_text
             custom_fields["general_message"] = message_text
 
     return {
-        "first_name": ct.get("first_name") or "",
-        "last_name": ct.get("last_name") or "",
-        "email": ct.get("email") or "",
+        "first_name": entry.get("lead_first_name") or "",
+        "last_name": entry.get("lead_last_name") or "",
+        "email": entry.get("lead_email") or "",
         "linkedin": linkedin_url,
-        "position": ct.get("relation_to_company") or "",
+        "position": entry.get("lead_position") or "",
         "company_name": co.get("name_raw") or "",
         "company_website": co.get("website") or co.get("domain_normalized") or "",
         "company_linkedin": co.get("linkedin_url") or "",
@@ -175,10 +172,9 @@ async def push_to_leadspicker(
                 skipped += 1
                 continue
 
-            sig = entry.get("signals") or {}
             is_crunchbase = entry.get("pipeline_type") == "crunchbase"
             if is_crunchbase:
-                meta = sig.get("source_metadata") or {}
+                meta = entry.get("source_metadata") or {}
                 if not isinstance(meta, dict):
                     meta = {}
                 status = str(entry.get("status") or "").strip().lower()
@@ -239,7 +235,7 @@ async def push_to_leadspicker(
             ).execute()
 
             if push_status == "success":
-                co = sig.get("companies") or {}
+                co = entry.get("companies") or {}
                 try:
                     from app.api._helpers import build_blacklist_row
                     row = build_blacklist_row(

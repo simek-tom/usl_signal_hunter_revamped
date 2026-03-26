@@ -7,32 +7,31 @@ Shared select clauses and utility functions for pipeline entry queries.
 # ---------------------------------------------------------------------------
 ENTRIES_SELECT = (
     "id,status,relevant,learning_data,ai_pre_score,ai_chat_state,"
-    "batch_id,pipeline_type,signal_id,contact_id,"
+    "batch_id,pipeline_type,company_id,source_type,"
+    "content_url,content_title,content_text,content_summary,"
+    "ai_classifier,author_full_name,author_first_name,author_last_name,author_linkedin,author_position,author_company_name,author_company_linkedin,published_at,"
+    "source_robot,external_id,source_metadata,"
+    "lead_full_name,lead_first_name,lead_last_name,lead_linkedin,lead_email,lead_position,lead_company_name,lead_company_linkedin,"
     "analyzed_at,enriched_at,pushed_at,created_at,"
-    "signals(id,content_url,content_title,content_text,content_summary,ai_classifier,"
-    "author_name,published_at,"
-    "source_robot,external_id,company_id,source_metadata,"
     "companies(id,name_raw,name_normalized,domain_normalized,"
     "linkedin_url,linkedin_url_cleaned,website,country,"
-    "employee_count,industry,hq_location,fingerprint)),"
-    "contacts(id,first_name,last_name,full_name,linkedin_url,email,relation_to_company)"
+    "employee_count,industry,hq_location,fingerprint)"
 )
 
 # ---------------------------------------------------------------------------
-# Select clause for draft-entries-full (extends ENTRIES_SELECT with messages
-# and contact.company_id for is_from_company computation)
+# Select clause for draft-entries-full (extends ENTRIES_SELECT with messages)
 # ---------------------------------------------------------------------------
 DRAFT_ENTRIES_SELECT = (
     "id,status,relevant,learning_data,ai_pre_score,ai_chat_state,"
-    "batch_id,pipeline_type,signal_id,contact_id,"
+    "batch_id,pipeline_type,company_id,source_type,"
+    "content_url,content_title,content_text,content_summary,"
+    "ai_classifier,author_full_name,author_first_name,author_last_name,author_linkedin,author_position,author_company_name,author_company_linkedin,published_at,"
+    "source_robot,external_id,source_metadata,"
+    "lead_full_name,lead_first_name,lead_last_name,lead_linkedin,lead_email,lead_position,lead_company_name,lead_company_linkedin,"
     "analyzed_at,enriched_at,pushed_at,drafted_at,created_at,"
-    "signals(id,content_url,content_title,content_text,content_summary,ai_classifier,"
-    "author_name,published_at,"
-    "source_robot,external_id,company_id,source_metadata,"
     "companies(id,name_raw,name_normalized,domain_normalized,"
     "linkedin_url,linkedin_url_cleaned,website,country,"
-    "employee_count,industry,hq_location,fingerprint)),"
-    "contacts(id,first_name,last_name,full_name,linkedin_url,email,relation_to_company,company_id),"
+    "employee_count,industry,hq_location,fingerprint),"
     "messages(id,draft_text,final_text,email_subject,ai_generated,version,created_at,updated_at)"
 )
 
@@ -41,13 +40,12 @@ def normalize_crunchbase_status(entry: dict) -> dict:
     """
     Compatibility shim:
     if DB enum doesn't yet include 'pushed-ready', we persist that marker
-    in signals.source_metadata.entry_workflow_status and expose it as status
+    in source_metadata.entry_workflow_status and expose it as status
     in API responses for workflow correctness.
     """
     if entry.get("pipeline_type") != "crunchbase":
         return entry
-    sig = entry.get("signals") or {}
-    meta = sig.get("source_metadata") or {}
+    meta = entry.get("source_metadata") or {}
     if not isinstance(meta, dict):
         return entry
 
@@ -58,24 +56,25 @@ def normalize_crunchbase_status(entry: dict) -> dict:
     return entry
 
 
-def is_post_author(contact: dict, signal: dict) -> bool:
+def is_post_author(entry: dict) -> bool:
     """
-    True when the contact's LinkedIn profile slug appears in the signal content_url.
+    True when the lead's LinkedIn profile slug appears in the content_url.
     """
-    li = (contact.get("linkedin_url") or "").rstrip("/")
-    url = (signal.get("content_url") or "")
+    li = (entry.get("lead_linkedin") or "").rstrip("/")
+    url = (entry.get("content_url") or "")
     if not li or not url:
         return False
     slug = li.split("/")[-1].lower()
     return bool(slug and slug in url.lower())
 
 
-def is_from_company(contact: dict, signal: dict) -> bool:
-    """True when the contact's company_id matches the signal's company_id."""
-    return bool(
-        contact.get("company_id")
-        and contact["company_id"] == signal.get("company_id")
-    )
+def is_same_person(entry: dict) -> bool:
+    """True when lead and author are the same person (same LinkedIn URL)."""
+    lead = (entry.get("lead_linkedin") or "").rstrip("/").lower()
+    author = (entry.get("author_linkedin") or "").rstrip("/").lower()
+    if not lead or not author:
+        return not lead and not author  # both empty = same (no distinct info)
+    return lead == author
 
 
 def build_blacklist_row(
